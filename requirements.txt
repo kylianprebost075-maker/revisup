@@ -1,0 +1,13 @@
+requests
+charset_normalizer
+icalendar
+tzdata
+flask
+pypdf
+python-pptx
+python-docx
+anthropic
+playwright
+keyring
+openpyxl
+pywebpush

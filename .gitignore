@@ -1,0 +1,18 @@
+# Données personnelles : notes, jetons, cours téléchargés, packs, journal… (jamais publiées)
+data/
+data-demo/
+config.toml
+*.log
+*.pem
+secrets.json
+
+# Environnement Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Réglages locaux (outils, éditeurs)
+.claude/
+.vscode/
+.idea/

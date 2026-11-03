@@ -1,0 +1,107 @@
+# ─────────────────────────────────────────────────────────────
+#  RevisUP — configuration
+#  Copie ce fichier en "config.toml" (ou lance : python -m revisup init)
+# ─────────────────────────────────────────────────────────────
+
+[etudiant]
+# Facultatif, reste sur ton PC : ce que l'analyse de tes notes doit savoir de toi
+# (ex. "BUT R&T en 1re année, je vise une alternance en 2e année").
+contexte = ""
+
+[edt]
+# URL iCal de ton emploi du temps UPplanning (ADE).
+# UPplanning > sélectionne tes groupes > icône "Exporter l'agenda" > "Générer l'URL" > copier.
+ical_url = ""
+# Mots qui signalent un examen dans le titre d'un créneau (majuscules/accents ignorés).
+mots_cles_examen = [
+  "examen", "exam", "partiel", "cc", "ct", "ds", "controle", "controle continu", "ctrl",
+  "epreuve", "evaluation", "soutenance", "rattrapage", "interro",
+  "tp note", "qcm note", "test note",
+]
+# Créneaux à ne jamais prendre pour un examen
+mots_exclus = ["evaluation des enseignements", "enquete", "reunion"]
+
+[updago]
+url = "https://updago.univ-poitiers.fr"
+# Le jeton de connexion s'obtient avec : python -m revisup connexion
+# (il est rangé dans data/secrets.json, ne le partage jamais)
+# Nombre de discussions de forum lues par forum
+discussions_par_forum = 25
+
+[mail]
+# Messagerie de l'université : les notes envoyées par les profs y sont lues.
+# "webmail" : connexion par l'ENT (CAS) dans Edge, depuis l'onglet Notes. Pas de mot de passe gardé.
+# Autres : "zimbra" (IMAP + mot de passe), "microsoft" (serveur = "outlook.office365.com")
+fournisseur = "webmail"
+serveur = "zimbra.univ-poitiers.fr"
+port = 993
+identifiant = ""
+# Lire les mails depuis cette date (inclure l'année précédente pour comparer)
+depuis = "2025-08-15"
+# Facultatif : aide à retrouver ta ligne dans les tableaux de notes de la promo
+numero_etudiant = ""
+
+[ia_locale]
+# LM Studio (par défaut) ou Ollama ("http://localhost:11434/v1")
+url = "http://localhost:1234/v1"
+modele = "openai/gpt-oss-20b"
+# Réflexion des modèles qui "pensent" (gpt-oss) : low / medium / high. Vide pour Qwen.
+effort_raisonnement = "medium"
+
+[claude]
+# "auto" : clé API si présente, sinon Claude Code (commande claude), sinon mode manuel
+# "api" | "cli" | "manuel"
+mode = "auto"
+modele = "claude-opus-5-5"
+effort = "high"
+# Mieux : la variable d'environnement ANTHROPIC_API_KEY. Sinon, colle la clé ici.
+api_key = ""
+# Quantité max de texte de cours envoyée à Claude par examen (~4 caractères = 1 token).
+# 400 000 caractères ≈ 100 000 tokens ≈ 0,40 $ d'entrée avec Opus 5.5.
+budget_caracteres = 400000
+nb_qcm = 20
+nb_exercices = 10
+
+[preparation]
+# Préparer automatiquement les examens qui ont lieu dans les N prochains jours
+horizon_jours = 21
+# Heures de révision par examen si Claude n'a pas encore estimé
+heures_par_examen = 10
+
+[planning]
+duree_session_min = 60
+pause_min = 10
+max_heures_par_jour = 3
+# Temps laissé libre avant/après un cours (pause)
+tampon_min = 15
+# Route entre la maison et l'IUT : avant le premier cours et après le dernier (0 = tu habites à côté)
+trajet_min = 0
+# Plages où tu acceptes de réviser (les cours de l'EDT sont retirés automatiquement)
+semaine  = ["08:00-12:00", "13:30-19:00", "20:00-22:00"]
+samedi   = ["10:00-12:30", "14:00-18:00"]
+dimanche = ["14:00-18:00"]
+# Activités régulières : jamais de révision pendant ces moments-là. Exemples :
+#   { nom = "Foot", jours = ["mercredi"], debut = "18:00", fin = "20:00" },
+#   { nom = "Salle de sport", jours = ["lundi"], apres_les_cours = true, duree_min = 90 },
+activites = []
+
+[notifications]
+# Notifications iPhone : installe l'app gratuite "ntfy" et abonne-toi à ce sujet.
+# (python -m revisup init en génère un aléatoire, difficile à deviner)
+ntfy_sujet = ""
+ntfy_serveur = "https://ntfy.sh"
+windows = true
+rappels_jours = [14, 7, 3, 1]
+resume_quotidien = "07:30"
+# Question « Qu'est-ce que tu fais aujourd'hui ? » (ton planning du jour s'adapte à ta réponse ; "" = jamais)
+question_du_jour = "12:00"
+# Rappel N minutes avant chaque session de révision (0 = désactivé)
+rappel_session_min = 10
+
+[web]
+# "127.0.0.1" = seulement ce PC ; "0.0.0.0" = accessible depuis l'iPhone sur le même Wi-Fi
+hote = "127.0.0.1"
+port = 8765
+sync_toutes_les_heures = 3
+# Adresse https de l'app sur l'iPhone (ex. Tailscale : tailscale serve --bg 8765), pour les liens des notifications
+url_publique = ""
