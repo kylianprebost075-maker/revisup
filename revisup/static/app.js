@@ -38,8 +38,13 @@ function md(texte) {
   if (!window.marked || !window.DOMPurify) return `<pre style="white-space:pre-wrap">${esc(texte)}</pre>`;
   const maths = [];
   let src = String(texte || "")
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, m) => `$$${m}$$`)  // notations LaTeX \[ \] et \( \) (IA locale)
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_, m) => `$${m}$`)
     .replace(/\$\$([\s\S]+?)\$\$/g, (_, m) => { maths.push([m, true]); return `@@M${maths.length - 1}@@`; })
     .replace(/(^|[^\\$])\$([^\n$]+?)\$/g, (_, avant, m) => { maths.push([m, false]); return `${avant}@@M${maths.length - 1}@@`; });
+  // Le contenu généré est du Markdown, pas du HTML : une balise écrite telle quelle (« <p> », « <img src=…> »,
+  // le sujet même d'un cours de Web) doit s'afficher, pas être interprétée. Le code entre ` ` est déjà protégé.
+  src = src.split(/(```[\s\S]*?```|`[^`\n]*`)/g).map((m, i) => (i % 2 ? m : m.replace(/</g, "&lt;"))).join("");
   let html = DOMPurify.sanitize(marked.parse(src));
   return html.replace(/@@M(\d+)@@/g, (_, i) => {
     const [m, bloc] = maths[+i];
@@ -228,7 +233,7 @@ async function vueExamen(id) {
   let data;
   try { data = await api(`/api/examen/${encodeURIComponent(id)}`); }
   catch { vue.innerHTML = `<p class="vide">Examen introuvable.</p>`; return; }
-  const { examen: e, pack, messages, documents, cours } = data;
+  const { examen: e, pack, messages, documents, cours, lecons_en_cours, lecons_lues } = data;
   const infos = e.infos || {};
   const occupe = !!ETAT.tache.nom;
   const lignesInfos = [["Salle", infos.salle || e.salle], ["Durée", infos.duree], ["Documents autorisés", infos.documents_autorises],
@@ -273,7 +278,8 @@ async function vueExamen(id) {
     </div>
 
     ${pack ? `<div class="onglets" id="onglets">
-        <button data-o="synthese" class="actif">Synthèse</button>
+        <button data-o="lecons" class="actif">🎓 Leçons</button>
+        <button data-o="synthese">Fiche</button>
         <button data-o="exercices">Exercices (${pack.exercices.length})</button>
         <button data-o="qcm">QCM (${pack.qcm.length})</button>
         <button data-o="essentiel">L'essentiel</button>
@@ -282,12 +288,14 @@ async function vueExamen(id) {
     : `<h2>Sources trouvées</h2><div id="contenu-onglet"></div>`}`;
 
   const onglets = {
+    lecons: () => `<div id="lecons"></div>`,
     synthese: () => `<div class="carte md">${md(pack.synthese_markdown)}</div>`,
     exercices: () => pack.exercices.map((x, i) => `<div class="carte" style="margin-bottom:.7rem">
         <h3 style="margin-top:0">${i + 1}. ${esc(x.titre)} <span class="badge ${x.difficulte === "difficile" ? "danger" : x.difficulte === "moyen" ? "alerte" : "ok"}">${esc(x.difficulte)}</span>
         <span class="doux">${esc(x.chapitre)}</span></h3>
         <div class="md">${md(x.enonce_markdown)}</div>
-        <details><summary>Voir le corrigé</summary><div class="md">${md(x.corrige_markdown)}</div></details></div>`).join(""),
+        <details><summary>Voir le corrigé</summary><div class="md">${md(x.corrige_markdown)}</div></details>
+        <div class="zone-ia" data-ex="${i}"></div></div>`).join(""),
     qcm: () => `<div id="qcm"></div>`,
     essentiel: () => `
       <div class="carte"><h3 style="margin-top:0">Chapitres et temps de révision estimé</h3>
@@ -305,9 +313,14 @@ async function vueExamen(id) {
       document.querySelectorAll("#onglets button").forEach((b) => b.classList.toggle("actif", b.dataset.o === o));
       zone.innerHTML = onglets[o]();
       if (o === "qcm") qcm(pack.qcm, $("#qcm"));
+      if (o === "lecons") vueLecons($("#lecons"), e, pack, lecons_en_cours, lecons_lues);
+      if (o === "exercices") zone.querySelectorAll("[data-ex]").forEach((z) => {
+        const x = pack.exercices[+z.dataset.ex];
+        boiteIA(z, { type: "exercice", matiere: e.matiere, titre: x.titre, enonce: x.enonce_markdown, corrige: x.corrige_markdown });
+      });
     };
     document.querySelectorAll("#onglets button").forEach((b) => (b.onclick = () => afficher(b.dataset.o)));
-    afficher("synthese");
+    afficher("lecons");
   } else {
     zone.innerHTML = sources(messages, documents, null);
   }
@@ -396,6 +409,144 @@ function qcm(questions, el) {
   dessiner();
 }
 
+// ── demander à l'IA : une discussion sur l'exercice ou la leçon affichée ──────────────
+const SUGGESTIONS_IA = ["Je bloque, donne-moi un indice", "Explique-moi la méthode", "Donne-moi un exemple concret"];
+const texteDe = (html) => { const t = document.createElement("div"); t.innerHTML = html; return t.innerText.trim(); };
+
+// contexte : objet ou fonction qui le renvoie (lu à chaque question : la réponse de l'étudiant a pu changer)
+function boiteIA(el, contexte, suggestions = SUGGESTIONS_IA) {
+  if (!el) return;
+  const fil = [];
+  let attente = false;
+  const envoyer = async (question) => {
+    question = question.trim();
+    if (!question || attente) return;
+    fil.push({ role: "user", content: question });
+    attente = true; dessiner();
+    try {
+      const r = await post("/api/aide", { contexte: typeof contexte === "function" ? contexte() : contexte,
+        question, historique: fil.slice(0, -1) });
+      fil.push({ role: "assistant", content: r.reponse });
+    } catch (e) { fil.push({ role: "assistant", content: `⚠️ ${e.message}` }); }
+    attente = false; dessiner();
+    const champ = el.querySelector("textarea");
+    if (champ) champ.focus();
+  };
+  const dessiner = () => {
+    el.innerHTML = `<div class="boite-ia">
+      <div class="ia-titre">💬 Demande à l'IA</div>
+      ${fil.length || attente ? `<div class="ia-fil">${fil.map((m) => `<div class="ia-msg ${m.role === "user" ? "moi" : "ia md"}">${m.role === "user" ? esc(m.content) : md(m.content)}</div>`).join("")}
+        ${attente ? `<div class="ia-msg ia doux">L'IA réfléchit…</div>` : ""}</div>` : ""}
+      ${fil.length ? "" : `<div class="ia-suggestions">${suggestions.map((s) => `<button type="button" class="btn petit" data-s="${esc(s)}">${esc(s)}</button>`).join("")}</div>`}
+      <form class="ia-saisie"><textarea rows="2" placeholder="Pose ta question sur ${esc(suggestions === SUGGESTIONS_LECON ? "cette leçon" : "cet exercice")}…" ${attente ? "disabled" : ""}></textarea>
+        <button class="btn principal" ${attente ? "disabled" : ""}>Envoyer</button></form></div>`;
+    el.querySelectorAll("[data-s]").forEach((b) => (b.onclick = () => envoyer(b.dataset.s)));
+    const f = el.querySelector("form"), champ = el.querySelector("textarea");
+    f.onsubmit = (ev) => { ev.preventDefault(); envoyer(champ.value); };
+    champ.onkeydown = (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); envoyer(champ.value); } };
+    const zone = el.querySelector(".ia-fil");
+    if (zone) zone.scrollTop = zone.scrollHeight;
+  };
+  el.innerHTML = `<button type="button" class="btn petit">💬 Demander à l'IA</button>`;
+  el.querySelector("button").onclick = () => { dessiner(); el.querySelector("textarea").focus(); };
+}
+
+// ── leçons vivantes : la fiche du pack réécrite par Claude, chapitre par chapitre ──────
+const SUGGESTIONS_LECON = ["Explique-moi autrement", "Donne-moi un autre exemple", "Pose-moi une question pour vérifier"];
+const motsDe = (t) => new Set(String(t).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/[^a-z0-9]+/).filter((m) => m.length > 3));
+
+// les QCM du pack rangés par leçon (chaque question va à la leçon dont le titre lui ressemble le plus)
+function qcmParLecon(lecons, qcm) {
+  const mots = lecons.map((l) => motsDe(l.titre));
+  const res = lecons.map(() => []);
+  qcm.forEach((q) => {
+    const m = motsDe(q.chapitre);
+    let meilleur = -1, score = 0;
+    mots.forEach((ml, i) => { const s = [...m].filter((x) => ml.has(x)).length / Math.max(1, Math.min(m.size, ml.size)); if (s > score) { score = s; meilleur = i; } });
+    if (meilleur >= 0 && score >= 0.34) res[meilleur].push(q);
+  });
+  return res;
+}
+
+function vueLecons(el, e, pack, enCours, lues) {
+  const L = pack.lecons || [];
+  if (!L.length) {
+    el.innerHTML = `<div class="carte lecons-vide"><div class="gros-emoji">🎓</div>
+      <h3>Des leçons vivantes plutôt qu'une fiche</h3>
+      <p>Claude réécrit ta fiche chapitre par chapitre : une situation concrète pour commencer, une image pour comprendre,
+        un exemple résolu pas à pas, le piège à éviter, la phrase à retenir et un petit défi. Avec l'IA pour répondre à tes questions.</p>
+      ${enCours ? `<p><b>⏳ Claude prépare tes leçons…</b> <span class="doux">(quelques minutes ; la page se met à jour toute seule)</span></p>`
+        : `<button class="btn principal" id="l-creer">✨ Créer les leçons</button>`}</div>`;
+    const b = $("#l-creer");
+    if (b) b.onclick = async () => { await post(`/api/examen/${encodeURIComponent(e.id)}/lecons`); vueLecons(el, e, pack, true, lues); attendreLecons(el, e, lues); };
+    if (enCours) attendreLecons(el, e, lues);
+    return;
+  }
+  const parLecon = qcmParLecon(L, pack.qcm || []);
+  const lu = new Set(lues);
+  const total = L.reduce((s, l) => s + (l.minutes || 10), 0);
+
+  const sommaire = () => {
+    el.innerHTML = `<div class="lecons-entete"><b>${lu.size}/${L.length} leçons comprises</b>
+        <div class="barre-progression"><div style="width:${(100 * lu.size) / L.length}%"></div></div>
+        <span class="doux">~${Math.round(total / 6) / 10} h en tout</span></div>
+      <div class="grille-lecons">${L.map((l, i) => `<button class="carte carte-lecon ${lu.has(i) ? "lue" : ""}" data-i="${i}">
+          <span class="num-lecon">${lu.has(i) ? "✓" : i + 1}</span>
+          <b>${esc(l.titre)}</b><span class="doux">${esc(l.accroche)}</span>
+          <span class="doux petit">⏱ ${l.minutes} min${parLecon[i].length ? ` · ${parLecon[i].length} QCM` : ""}</span></button>`).join("")}</div>`;
+    el.querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => lecon(+b.dataset.i)));
+  };
+
+  const lecon = (i) => {
+    const l = L[i];
+    el.innerHTML = `<div class="lecon">
+      <div class="lecons-entete"><button class="btn petit" id="l-sommaire">← Toutes les leçons</button>
+        <span>Leçon ${i + 1}/${L.length} · ⏱ ${l.minutes} min</span>
+        <div class="barre-progression"><div style="width:${(100 * (i + 1)) / L.length}%"></div></div></div>
+      <h2 class="titre-lecon">${esc(l.titre)}</h2>
+      <p class="accroche">${esc(l.accroche)}</p>
+      <div class="encadre analogie"><b>💡 L'image à garder en tête</b><div class="md">${md(l.analogie)}</div></div>
+      <div class="carte md texte-lecon">${md(l.explication_markdown)}</div>
+      <div class="encadre exemple"><b>🧪 Exemple pas à pas</b><div class="md">${md(l.exemple_markdown)}</div></div>
+      <div class="encadre piege"><b>⚠️ Le piège</b><div class="md">${md(l.piege)}</div></div>
+      <div class="encadre retenir"><b>📌 À retenir</b><p>${esc(l.a_retenir)}</p></div>
+      <div class="encadre defi"><b>🎯 Défi</b><div class="md">${md(l.defi_question)}</div>
+        <details><summary>Voir la réponse</summary><div class="md">${md(l.defi_reponse_markdown)}</div></details></div>
+      ${parLecon[i].length ? `<h3>✅ Vérifie avec le QCM</h3><div id="l-qcm"></div>` : ""}
+      <div id="l-ia" class="zone-ia"></div>
+      <div class="nav-lecon">
+        ${i > 0 ? `<button class="btn" id="l-prec">← Précédente</button>` : "<span></span>"}
+        <button class="btn principal" id="l-compris">${i + 1 < L.length ? "✓ J'ai compris, leçon suivante →" : "✓ J'ai compris, terminé !"}</button></div></div>`;
+    if (parLecon[i].length) qcm(parLecon[i], $("#l-qcm"));
+    boiteIA($("#l-ia"), { type: "lecon", matiere: e.matiere, titre: l.titre,
+      enonce: [l.accroche, l.analogie, l.explication_markdown, l.exemple_markdown, `Piège : ${l.piege}`, `À retenir : ${l.a_retenir}`].join("\n\n") }, SUGGESTIONS_LECON);
+    if (window.renderMathInElement) renderMathInElement(el, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }] });
+    $("#l-sommaire").onclick = sommaire;
+    const p = $("#l-prec");
+    if (p) p.onclick = () => lecon(i - 1);
+    $("#l-compris").onclick = async () => {
+      lu.add(i);
+      post(`/api/examen/${encodeURIComponent(e.id)}/lecon-lue`, { index: i, lue: true }).catch(() => {});
+      if (i + 1 < L.length) lecon(i + 1); else { sommaire(); toast("Bravo, toutes les leçons sont faites ! Passe au quiz chrono pour ancrer."); }
+    };
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  sommaire();
+}
+
+// pendant que Claude écrit les leçons : on revérifie toutes les 20 s, tant que l'onglet est affiché
+function attendreLecons(el, e, lues) {
+  clearTimeout(el._attente);
+  el._attente = setTimeout(async () => {
+    if (!document.body.contains(el)) return;
+    try {
+      const d = await api(`/api/examen/${encodeURIComponent(e.id)}`);
+      if (d.pack?.lecons?.length || !d.lecons_en_cours) vueLecons(el, e, d.pack, d.lecons_en_cours, d.lecons_lues);
+      else attendreLecons(el, e, lues);
+    } catch { attendreLecons(el, e, lues); }
+  }, 20000);
+}
+
 // ── notes ────────────────────────────────────────────────────────────────
 let GRAPHIQUES = [];
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -419,15 +570,23 @@ async function vueNotes() {
 
   vue.innerHTML = `
     <h1>Mes notes</h1>
-    ${d.configure ? "" : d.fournisseur === "webmail" ? `<div class="carte connexion-mail">
-      <h2>Connecte ta messagerie de l'université</h2>
+    ${d.fournisseur === "webmail" && d.configure && d.auto ? "" : d.fournisseur === "webmail" ? `<div class="carte connexion-mail">
+      <h2>${d.configure ? "Reconnexion automatique de ta messagerie" : "Connecte ta messagerie de l'université"}</h2>
       ${d.connexion_en_cours
-        ? `<p><b>Une fenêtre Edge s'est ouverte sur la page de connexion de l'université.</b> Connecte-toi comme sur l'ENT ;
+        ? `<p><b>Une fenêtre Edge s'est ouverte sur le PC, sur la page de connexion de l'université.</b> Connecte-toi comme sur l'ENT ;
            elle se ferme toute seule quand c'est bon, puis la lecture de tes notes démarre.</p>
            <button class="btn petit" onclick="vueNotes()">Actualiser</button>`
-        : `<p class="doux">Une fenêtre Edge va s'ouvrir sur la page de connexion de l'université (la même que l'ENT).
-           RevisUP garde seulement la session du webmail, jamais ton mot de passe.</p>
-           <button class="btn principal" id="mail-web">Se connecter avec l'ENT</button>
+        : `<p class="doux">${d.configure ? "La session de l'ENT expire au bout de quelques heures : sans ça, il faut se reconnecter à la main. " : ""}
+           RevisUP se reconnecte tout seul quand la session expire, puis relit tes mails à chaque synchro.
+           Ton mot de passe est rangé dans le coffre de Windows du PC (jamais dans un fichier) et n'est tapé que sur la page de l'ENT.
+           Un seul essai à chaque fois : ton compte ne peut pas être bloqué.</p>
+           <form class="ligne" id="form-auto">
+             <label>Identifiant de l'ENT <input name="identifiant" value="${esc((d.identifiant || "").split("@")[0])}" autocomplete="username" required style="width:11rem"></label>
+             <label>Mot de passe <input name="mdp" type="password" autocomplete="current-password" required style="width:13rem"></label>
+             <button class="btn principal" id="auto-ok">Se connecter</button></form>
+           <p class="doux" id="auto-etat" role="status"></p>
+           ${d.configure ? "" : `<p class="doux">Ou sans garder ton mot de passe : <button class="btn petit" id="mail-web">ouvrir la page de l'ENT sur le PC</button>
+             (à refaire à chaque expiration).</p>`}
            ${d.erreur_connexion ? `<p class="erreur">Dernier essai : ${esc(d.erreur_connexion)}</p>` : ""}`}</div>`
       : d.fournisseur === "microsoft" ? `<div class="alerte-boite">Pour lire tes notes dans ta boîte mail, double-clique sur <b>mail-connexion.bat</b>
       (dans le dossier de RevisUP) et connecte-toi sur la page Microsoft qui s'ouvre. RevisUP ne garde qu'un jeton de lecture, jamais ton mot de passe.</div>`
@@ -440,6 +599,8 @@ async function vueNotes() {
         <button class="btn principal" id="mail-ok">Connexion</button>
       </div>
       <p class="doux" id="mail-etat" role="status"></p></form>`}
+    ${d.auto ? `<p class="doux">🔁 Reconnexion automatique activée (${esc(d.auto)}) : tes mails sont relus à chaque synchro.
+      <button class="btn petit" id="auto-off">Désactiver et effacer le mot de passe</button></p>` : ""}
     <p class="doux">${d.mails_lus} mail(s) lu(s) · dernière lecture ${d.maj ? dateCourte(d.maj) + " à " + hm(d.maj) : "jamais"}
       &nbsp;<button class="btn petit" id="n-sync" ${occupe || !d.configure ? "disabled" : ""}>📬 Lire mes mails de notes</button>
       <button class="btn petit" id="n-analyse" ${occupe || !d.liste.length ? "disabled" : ""}>✨ Analyser avec Claude</button></p>
@@ -522,6 +683,30 @@ async function vueNotes() {
       await charger();
       vueNotes();
     } catch (err) { toast(err.message); bw.disabled = false; }
+  };
+  const fa = $("#form-auto");
+  if (fa) fa.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const etat = $("#auto-etat"), bouton = $("#auto-ok");
+    bouton.disabled = true;
+    etat.className = "doux";
+    etat.textContent = "Connexion à l'ENT sur le PC… (jusqu'à une minute)";
+    try {
+      const r = await post("/api/mail/auto", Object.fromEntries(new FormData(fa)));
+      toast(`Messagerie connectée (${r.adresse}). Lecture de tes mails de notes lancée.`);
+      await charger();
+      vueNotes();
+    } catch (err) {
+      etat.className = "erreur";
+      etat.textContent = err.message + " — vérifie l'identifiant et le mot de passe de l'ENT.";
+      bouton.disabled = false;
+    }
+  };
+  const ao = $("#auto-off");
+  if (ao) ao.onclick = async () => {
+    await api("/api/mail/auto", { method: "DELETE" });
+    toast("Reconnexion automatique désactivée, mot de passe effacé.");
+    vueNotes();
   };
   const fm = $("#form-mail");
   if (fm) fm.onsubmit = async (ev) => {
@@ -819,7 +1004,9 @@ async function vueJournee(choixNotif) {
 // ── notifications sur ce téléphone (app installée sur l'écran d'accueil) ──────────
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const INSTALLEE = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-const nomAppareil = () => (IOS ? "iPhone" : /Android/.test(navigator.userAgent) ? "Android" : /Windows/.test(navigator.userAgent) ? "PC Windows" : "navigateur");
+// (un iPad récent se présente comme un Mac, mais tactile)
+const MAC = /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints < 2;
+const nomAppareil = () => (IOS ? "iPhone" : MAC ? "Mac" : /Android/.test(navigator.userAgent) ? "Android" : /Windows/.test(navigator.userAgent) ? "PC Windows" : "navigateur");
 const b64EnOctets = (b64) => {
   const brut = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
   return Uint8Array.from(brut, (c) => c.charCodeAt(0));
@@ -829,13 +1016,17 @@ async function etatNotifications() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !window.isSecureContext) {
     return IOS && !INSTALLEE ? "installer" : "impossible";
   }
-  const enr = await navigator.serviceWorker.ready;
+  // ready ne répond jamais si le navigateur a refusé le service worker
+  const enr = await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 5000))]);
+  if (!enr) return "impossible";
   return (await enr.pushManager.getSubscription()) ? "actives" : "inactives";
 }
 
 async function activerNotifications() {
   const enr = await navigator.serviceWorker.ready;
-  if ((await Notification.requestPermission()) !== "granted") throw new Error("Notifications refusées : autorise-les dans Réglages > Notifications > RevisUP.");
+  if ((await Notification.requestPermission()) !== "granted") throw new Error(IOS
+    ? "Notifications refusées : autorise-les dans Réglages > Notifications > RevisUP."
+    : "Notifications refusées : autorise-les pour ce site (cadenas à gauche de l'adresse), et sur Mac dans Réglages Système > Notifications.");
   const { cle } = await api("/api/push/cle");
   const abonnement = await enr.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64EnOctets(cle) });
   await post("/api/push/abonner", { abonnement: abonnement.toJSON(), appareil: nomAppareil() });
@@ -867,7 +1058,7 @@ async function blocNotifications() {
 const CONNEXIONS = {
   edt: ["Emploi du temps UPplanning", null],
   updago: ["UPdago (cours, messages des profs)", "Se reconnecter"],
-  messagerie: ["Messagerie (tes notes)", "Se reconnecter avec l'ENT"],
+  messagerie: ["Messagerie (tes notes)", "Se reconnecter"],
   claude: ["Claude (packs de révision, analyses)", "Reconnecter Claude"],
   ia_locale: ["IA locale (LM Studio)", "Démarrer LM Studio"],
 };
@@ -881,7 +1072,8 @@ function blocConnexions() {
     const reparation = enCours.includes(cle) || (cle === "messagerie" && enCours.includes("messagerie"));
     return `<div class="carte"><b>${ok === true ? "✅" : ok === false ? "❌" : "⚪"} ${titre}</b>
       <div class="doux">${esc(r ? r.detail : "pas encore vérifié")}${plus[cle] || ""}</div>
-      ${ok !== true && bouton ? (reparation ? `<p class="doux">⏳ En cours… regarde l'écran du PC.</p>`
+      ${ok !== true && cle === "messagerie" ? `<a class="btn petit" href="#/notes" style="margin-top:.4rem">${bouton}</a>`
+      : ok !== true && bouton ? (reparation ? `<p class="doux">⏳ En cours… regarde l'écran du PC.</p>`
         : `<button class="btn petit" data-reparer="${cle}" style="margin-top:.4rem">${bouton}</button>
            ${cle !== "ia_locale" ? `<span class="doux"> (la fenêtre s'ouvre sur le PC)</span>` : ""}`) : ""}</div>`;
   }).join("")}</div>

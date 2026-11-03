@@ -2,7 +2,9 @@
 
 Trois façons d'y accéder (config.toml, [mail] fournisseur) :
   "webmail"   : webmail Zimbra (upmail). L'étudiant se connecte lui-même par le CAS dans Edge, comme pour
-                l'ENT ; RevisUP garde seulement le jeton de session du webmail, jamais le mot de passe.
+                l'ENT ; RevisUP garde seulement le jeton de session du webmail. S'il active la reconnexion
+                automatique, son mot de passe de l'ENT est rangé dans le coffre de Windows (jamais dans un fichier)
+                et la page de l'ENT est remplie sans fenêtre quand la session expire.
   "zimbra"    : IMAP Zimbra avec mot de passe, rangé dans le coffre de Windows.
   "microsoft" : IMAP Microsoft 365 avec un jeton OAuth2 (page de connexion Microsoft).
 Les pièces jointes (listes de notes de toute la promo) ne sont jamais envoyées ailleurs : on n'en
@@ -31,6 +33,7 @@ from .edt import normaliser
 from .updago import texte_brut
 
 SERVICE_COFFRE = "revisup-zimbra"
+SERVICE_ENT = "revisup-ent"  # reconnexion automatique au webmail par l'ENT
 WEBMAIL = "https://upmail.univ-poitiers.fr"
 PROFIL_NAVIGATEUR = Path.home() / ".revisup" / "navigateur"
 # Connexion OAuth2 à Microsoft 365, comme Thunderbird (application publique, lecture IMAP seulement)
@@ -51,14 +54,50 @@ class ErreurMail(Exception):
     pass
 
 
-def mot_de_passe(identifiant: str) -> str | None:
-    import keyring
-    return keyring.get_password(SERVICE_COFFRE, identifiant)
+class MotDePasseRefuse(ErreurMail):
+    """L'ENT a refusé le mot de passe enregistré : on ne le réessaie jamais (pas de blocage du compte)."""
 
 
-def enregistrer_mot_de_passe(identifiant: str, mdp: str) -> None:
+def mot_de_passe(identifiant: str, service: str = SERVICE_COFFRE) -> str | None:
     import keyring
-    keyring.set_password(SERVICE_COFFRE, identifiant, mdp)
+    return keyring.get_password(service, identifiant)
+
+
+def enregistrer_mot_de_passe(identifiant: str, mdp: str, service: str = SERVICE_COFFRE) -> None:
+    import keyring
+    keyring.set_password(service, identifiant, mdp)
+
+
+def oublier_mot_de_passe(identifiant: str, service: str = SERVICE_COFFRE) -> None:
+    import keyring
+    try:
+        keyring.delete_password(service, identifiant)
+    except keyring.errors.PasswordDeleteError:
+        pass
+
+
+def identifiants_ent() -> tuple[str, str] | None:
+    """Identifiant et mot de passe de l'ENT gardés pour la reconnexion automatique, s'il l'a activée."""
+    ident = store.lire_secrets().get("ent_identifiant", "")
+    mdp = mot_de_passe(ident, SERVICE_ENT) if ident else None
+    return (ident, mdp) if mdp else None
+
+
+def activer_reconnexion_auto(identifiant: str, mdp: str) -> str:
+    """Un seul essai sur la page de l'ENT ; si c'est bon, le mot de passe va dans le coffre de Windows."""
+    if not identifiant or not mdp:
+        raise ErreurMail("identifiant ou mot de passe vide.")
+    adresse = connexion_webmail(visible=False, delai_s=60, identifiants=(identifiant, mdp))
+    enregistrer_mot_de_passe(identifiant, mdp, SERVICE_ENT)
+    store.ecrire_secret("ent_identifiant", identifiant)
+    return adresse
+
+
+def desactiver_reconnexion_auto() -> None:
+    ident = store.lire_secrets().get("ent_identifiant", "")
+    if ident:
+        oublier_mot_de_passe(ident, SERVICE_ENT)
+    store.ecrire_secret("ent_identifiant", "")
 
 
 def variantes_identifiant(saisi: str, nom_etudiant: str) -> list[str]:
@@ -197,7 +236,7 @@ def microsoft(cfg: dict) -> bool:
 
 def connectee(cfg: dict) -> bool:
     if fournisseur(cfg) == "webmail":
-        return bool(store.lire_secrets().get("webmail_jeton"))
+        return bool(store.lire_secrets().get("webmail_jeton") or identifiants_ent())
     if microsoft(cfg):
         return bool(store.lire_secrets().get("mail_jeton_refresh"))
     ident = cfg.get("mail", {}).get("identifiant")
@@ -210,14 +249,24 @@ def ouvrir(cfg: dict) -> "Boite | BoiteWeb":
         boite = BoiteWeb(store.lire_secrets().get("webmail_jeton", ""))
         try:
             boite.adresse()
+            return boite
         except (ErreurMail, requests.RequestException):
-            try:  # session du webmail expirée : la session CAS du profil Edge suffit souvent, sans fenêtre
-                connexion_webmail(visible=False, delai_s=45)
-            except ErreurMail:
-                store.ecrire_secret("webmail_jeton", "")
-                raise ErreurMail("session du webmail expirée : reconnecte-toi dans l'onglet Notes")
-            boite = BoiteWeb(store.lire_secrets()["webmail_jeton"])
-        return boite
+            pass
+        # session du webmail expirée : mot de passe du coffre (reconnexion automatique), sinon la session CAS
+        # du profil Edge, qui suffit souvent quelques heures ; le tout sans fenêtre
+        ids = identifiants_ent()
+        try:
+            connexion_webmail(visible=False, delai_s=60, identifiants=ids)
+        except MotDePasseRefuse:
+            desactiver_reconnexion_auto()
+            store.ecrire_secret("webmail_jeton", "")
+            raise ErreurMail("l'ENT a refusé le mot de passe enregistré (changé ?) : reconnecte-toi dans l'onglet Notes")
+        except ErreurMail:
+            if ids:  # souci passager (réseau, ENT en panne) : on garde tout, nouvel essai à la prochaine synchro
+                raise ErreurMail("reconnexion automatique impossible pour l'instant, nouvel essai à la prochaine synchro")
+            store.ecrire_secret("webmail_jeton", "")
+            raise ErreurMail("session du webmail expirée : reconnecte-toi dans l'onglet Notes")
+        return BoiteWeb(store.lire_secrets()["webmail_jeton"])
     if microsoft(cfg):
         adresse, jeton = jeton_microsoft()
         return Boite(m.get("serveur") or "outlook.office365.com", int(m.get("port", 993)), adresse, jeton=jeton)
@@ -404,24 +453,30 @@ class BoiteWeb:
         return _lire_message(r.content, nom_etudiant, numero)
 
 
-def connexion_webmail(visible: bool = True, delai_s: int = 900) -> str:
+def connexion_webmail(visible: bool = True, delai_s: int = 900, identifiants: tuple[str, str] | None = None) -> str:
     """Ouvre le webmail dans Edge : l'étudiant se connecte lui-même (CAS, comme l'ENT). Renvoie son adresse.
 
     Le profil du navigateur est gardé (~/.revisup/navigateur) : tant que la session CAS est valide,
-    le jeton se renouvelle sans fenêtre (visible=False)."""
+    le jeton se renouvelle sans fenêtre (visible=False).
+    Avec identifiants (reconnexion automatique) : navigateur neuf et invisible, la page de l'ENT est remplie
+    une seule fois ; si elle reste affichée, MotDePasseRefuse (jamais de 2e essai : pas de blocage du compte)."""
     import time
 
     from playwright.sync_api import sync_playwright
 
     PROFIL_NAVIGATEUR.mkdir(parents=True, exist_ok=True)
-    jeton, adresse, testes = "", "", set()
+    jeton, adresse, testes, soumis, refuse = "", "", set(), 0.0, False
     with sync_playwright() as p:
-        contexte = None
+        contexte = navigateur = None
         for canal in ("msedge", "chrome", None):
+            options = {"channel": canal} if canal else {}
             try:
-                options = {"headless": not visible, "no_viewport": True, "args": ["--start-maximized"]}
-                contexte = p.chromium.launch_persistent_context(str(PROFIL_NAVIGATEUR), **options,
-                                                                **({"channel": canal} if canal else {}))
+                if identifiants:
+                    navigateur = p.chromium.launch(headless=True, **options)
+                    contexte = navigateur.new_context()
+                else:
+                    contexte = p.chromium.launch_persistent_context(
+                        str(PROFIL_NAVIGATEUR), headless=not visible, no_viewport=True, args=["--start-maximized"], **options)
                 break
             except Exception:
                 continue
@@ -443,7 +498,19 @@ def connexion_webmail(visible: bool = True, delai_s: int = 900) -> str:
             except Exception:  # fenêtre fermée par l'étudiant
                 break
             if hote.startswith("auth.") or not hote.endswith("univ-poitiers.fr"):
-                continue  # encore sur la page CAS
+                if identifiants and hote.startswith("auth."):  # encore sur la page CAS
+                    if not soumis:
+                        try:
+                            page.fill("#username", identifiants[0], timeout=5000)
+                            page.fill("#password", identifiants[1], timeout=5000)
+                            page.press("#password", "Enter")
+                            soumis = time.time()
+                        except Exception:
+                            pass  # page encore en chargement
+                    elif time.time() - soumis > 20:
+                        refuse = True  # toujours sur l'ENT : mot de passe refusé (ou double authentification)
+                        break
+                continue
             jetons = [c for c in cookies if c["name"] == "ZM_AUTH_TOKEN"]
             if f"{hote}{len(jetons)}" != vu:  # diagnostic : où on en est, sans aucune valeur de cookie
                 vu = f"{hote}{len(jetons)}"
@@ -460,8 +527,12 @@ def connexion_webmail(visible: bool = True, delai_s: int = 900) -> str:
                     print(f"Webmail : jeton refusé par {base} ({e})", flush=True)  # ancien jeton du profil ?
         try:
             contexte.close()
+            if navigateur:
+                navigateur.close()
         except Exception:
             pass
+    if not adresse and refuse:
+        raise MotDePasseRefuse("l'ENT a refusé l'identifiant ou le mot de passe")
     if not adresse:
         raise ErreurMail("Connexion au webmail non terminée (fenêtre fermée ou délai dépassé).")
     store.ecrire_secret("webmail_url", base_ok)

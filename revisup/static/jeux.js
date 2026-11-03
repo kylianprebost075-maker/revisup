@@ -142,7 +142,14 @@ async function jouerQuiz(eid) {
     $("#q-suite").innerHTML = `<div class="carte ${juste ? "retour-bon" : "retour-mauvais"}">
       <b>${juste ? `✅ Bien joué ! +${gain}` : k === -1 ? "⏱️ Temps écoulé" : "❌ Raté"}</b>
       <div class="md">${md(x.explication)}</div>
-      <button class="btn principal" id="q-suivant">${fini ? "Voir mon score" : "Question suivante →"}</button></div>`;
+      <button class="btn principal" id="q-suivant">${fini ? "Voir mon score" : "Question suivante →"}</button></div>
+      <div id="q-ia" class="zone-ia"></div>`;
+    boiteIA($("#q-ia"), {
+      type: "qcm", matiere: q.matiere, titre: "Question du quiz",
+      enonce: `${x.question}\nChoix : ${x.choix.map((c, n) => `${"ABCDEF"[n]}) ${c}`).join(" ; ")}`,
+      corrige: `Bonne réponse : ${x.choix[x.bonne_reponse]}\n${x.explication}`,
+      reponse_eleve: k >= 0 ? x.choix[k] : "aucune (temps écoulé)",
+    }, ["Pourquoi c'est cette réponse ?", "Explique-moi la notion", "Donne-moi une astuce pour m'en souvenir"]);
     $("#q-suivant").onclick = () => { if (fini) terminer(); else { P.i += 1; question(); } };
     $("#q-suivant").focus();
   };
@@ -367,7 +374,14 @@ function jouerExo(type) {
                placeholder="${esc(x.placeholder || "ta réponse")}" style="flex:1;min-width:9rem;font-size:1.1rem">
              ${x.unite ? `<span class="unite">${x.unite}</span>` : ""}<button class="btn principal">Valider</button></form>`}
       </div>
-      <div id="e-suite"></div>`;
+      <div id="e-suite"></div>
+      <div id="e-ia" class="zone-ia"></div>`;
+    boiteIA($("#e-ia"), () => ({
+      type: "exo_jeu", titre: TITRES_EXO[type],
+      enonce: texteDe(x.enonce) + (x.choix ? `\nChoix : ${x.choix.map((c, k) => `${"ABCD"[k]}) ${texteDe(c)}`).join(" ; ")}` : ""),
+      ...(P.corrige === P.i ? { corrige: `Bonne réponse : ${x.reponse}\n${texteDe(x.explication)}`, reponse_eleve: P.rep }
+        : { pas_encore_repondu: true }),
+    }));
     if (x.choix) vue.querySelectorAll("[data-k]").forEach((b) => b.onclick = () => corriger(+b.dataset.k));
     else { $("#e-form").onsubmit = (ev) => { ev.preventDefault(); const v = $("#e-rep").value; if (v.trim()) corriger(v); }; $("#e-rep").focus(); }
   };
@@ -376,6 +390,7 @@ function jouerExo(type) {
     if (P.corrige === P.i) return;
     P.corrige = P.i;
     const x = P.x, juste = x.verifier(rep), secondes = (Date.now() - P.debut) / 1000;
+    P.rep = x.choix ? texteDe(x.choix[rep]) : String(rep);
     if (x.choix) vue.querySelectorAll("[data-k]").forEach((b) => {
       b.disabled = true;
       if (+b.dataset.k === x.bonne) b.classList.add("bon"); else if (+b.dataset.k === rep) b.classList.add("mauvais");

@@ -11,7 +11,7 @@ from pathlib import Path
 from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory
 
 from . import (config, ia_claude, jeux, journee, notes, notifications, planning, preparation, push, rappels, sante,
-               store, synchro)
+               store, synchro, tuteur)
 from .ia_locale import IALocale, _similarite
 from .store import DOSSIER_COURS, maintenant
 
@@ -33,6 +33,7 @@ def tout(cfg: dict) -> None:
             store.journal(f"Notes : lecture des mails impossible ({e})", "erreur")
     preparation.preparer_tout(cfg)
     jeux.cartes_a_creer(cfg)  # cartes mémoire des nouveaux packs, en arrière-plan
+    tuteur.lecons_a_creer(cfg)  # leçons vivantes du prochain examen, en arrière-plan
     planning.generer(cfg)
     rappels.verifier(cfg)
 
@@ -191,7 +192,35 @@ def api_examen(eid):
                          "local": str(local.relative_to(DOSSIER_COURS)).replace("\\", "/") if local and local.exists() else None})
     cours = sorted(etat["updago"].get("cours", []), key=lambda c: -_similarite(ex["matiere"], c["nom"]))
     return jsonify({"examen": _resume_examen(ex), "pack": store.lire_pack(eid), "messages": messages,
-                    "documents": docs, "cours": [{"id": c["id"], "nom": c["nom"]} for c in cours]})
+                    "documents": docs, "cours": [{"id": c["id"], "nom": c["nom"]} for c in cours],
+                    "lecons_en_cours": tuteur.en_cours(eid), "lecons_lues": etat.get("lecons_lues", {}).get(eid, [])})
+
+
+@app.post("/api/examen/<eid>/lecons")
+def api_lecons(eid):
+    if not store.lire_pack(eid):
+        abort(404)
+    ok = tuteur.lancer(app.config["CFG"], eid)
+    return jsonify({"ok": ok, "message": None if ok else "Les leçons sont déjà en préparation."})
+
+
+@app.post("/api/examen/<eid>/lecon-lue")
+def api_lecon_lue(eid):
+    c = request.get_json(force=True) or {}
+    return jsonify({"ok": True, "lues": tuteur.marquer_lue(eid, int(c.get("index", 0)), bool(c.get("lue", True)))})
+
+
+@app.post("/api/aide")
+def api_aide():
+    """Question de l'étudiant sur l'exercice ou la leçon qu'il a sous les yeux."""
+    c = request.get_json(force=True) or {}
+    try:
+        reponse = tuteur.aide(app.config["CFG"], c.get("contexte") or {}, c.get("question", ""), c.get("historique") or [])
+    except ValueError as e:
+        return jsonify({"ok": False, "message": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "message": f"L'IA ne répond pas ({type(e).__name__}) : réessaie dans un instant."}), 503
+    return jsonify({"ok": True, "reponse": reponse})
 
 
 @app.post("/api/examen/<eid>/preparer")
@@ -462,12 +491,40 @@ def _derniere_erreur_connexion(etat: dict) -> str | None:
 def api_notes():
     cfg = app.config["CFG"]
     etat = store.lire()
+    from .mail import identifiants_ent
+    auto = identifiants_ent()
     return jsonify({"configure": notes.configure(cfg), "identifiant": cfg.get("mail", {}).get("identifiant"),
+                    "auto": auto[0] if auto else None,
                     "fournisseur": cfg.get("mail", {}).get("fournisseur", "webmail"),
                     "erreur_connexion": _derniere_erreur_connexion(etat), "connexion_en_cours": _connexion_mail["en_cours"],
                     "stats": notes.statistiques(etat), "liste": sorted(notes.notes_utiles(etat["notes"]["liste"]), key=lambda n: n["date"]),
                     "analyse": etat["notes"].get("analyse"), "maj": etat["notes"].get("maj"),
                     "mails_lus": len(etat["notes"]["mails"]), "tache": _tache})
+
+
+@app.route("/api/mail/auto", methods=["POST", "DELETE"])
+def api_mail_auto():
+    """Reconnexion automatique : un seul essai sur la page de l'ENT (sans fenêtre), puis le mot de passe va
+    dans le coffre de Windows. DELETE : l'oublier."""
+    from .mail import ErreurMail, activer_reconnexion_auto, desactiver_reconnexion_auto
+    cfg = app.config["CFG"]
+    if request.method == "DELETE":
+        desactiver_reconnexion_auto()
+        store.journal("Messagerie : reconnexion automatique désactivée, mot de passe effacé du coffre")
+        return jsonify({"ok": True})
+    c = request.get_json(force=True) or {}
+    try:
+        adresse = activer_reconnexion_auto(str(c.get("identifiant", "")).strip(), str(c.get("mdp", "")).strip("\r\n"))
+    except ErreurMail as e:
+        return jsonify({"ok": False, "message": f"Connexion refusée : {e}"}), 400
+    store.journal(f"Messagerie connectée ({adresse}), reconnexion automatique activée")
+    threading.Thread(target=_lire_quand_libre, args=(cfg,), daemon=True).start()
+    return jsonify({"ok": True, "adresse": adresse})
+
+
+def _lire_quand_libre(cfg: dict) -> None:
+    while not lancer("Lecture des mails de notes", notes.synchroniser, cfg):
+        time.sleep(15)
 
 
 @app.post("/api/mail/connexion")
@@ -502,8 +559,7 @@ def _connexion_webmail_puis_lecture(cfg: dict) -> None:
         return
     finally:
         _connexion_mail["en_cours"] = False
-    while not lancer("Lecture des mails de notes", notes.synchroniser, cfg):
-        time.sleep(15)
+    _lire_quand_libre(cfg)
 
 
 @app.post("/api/mail/connexion-web")

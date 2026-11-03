@@ -18,7 +18,7 @@ from .store import maintenant
 # titre de l'alerte, et ce qu'il faut faire (le bouton est dans Réglages, la fenêtre s'ouvre sur le PC)
 CONSEILS = {
     "updago": ("UPdago est déconnecté", "Plus de nouveaux cours ni messages des profs. Réglages → Se reconnecter (sur le PC)."),
-    "messagerie": ("Ta messagerie est déconnectée", "Plus de nouvelles notes. Réglages → Se reconnecter avec l'ENT (sur le PC)."),
+    "messagerie": ("Ta messagerie est déconnectée", "Plus de nouvelles notes. Onglet Notes → active la reconnexion automatique."),
     "claude": ("Claude est déconnecté", "Les packs de révision ne se font plus. Réglages → Reconnecter Claude (sur le PC)."),
     "ia_locale": ("L'IA locale ne répond pas", "LM Studio est fermé : Réglages → Démarrer LM Studio, ou ouvre-le sur le PC."),
     "edt": ("Emploi du temps pas mis à jour", "Le lien UPplanning ne répond plus depuis plus d'un jour."),
@@ -74,7 +74,9 @@ def _messagerie(cfg: dict) -> tuple[bool | None, str]:
     from . import mail
     if not mail.connectee(cfg):
         # jamais connectée : pas d'alerte ; déconnectée (session expirée et pas renouvelable) : alerte
-        return (False, "session expirée") if cfg["mail"].get("identifiant", "").count("@") else (None, "pas connectée")
+        if store.lire()["notes"].get("maj"):
+            return False, "session expirée : active la reconnexion automatique dans l'onglet Notes"
+        return None, "pas connectée"
     try:
         boite = mail.ouvrir(cfg)  # le webmail tente de renouveler sa session sans fenêtre
         adresse = boite.adresse() if hasattr(boite, "adresse") else cfg["mail"].get("identifiant", "")

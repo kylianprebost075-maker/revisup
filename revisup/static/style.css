@@ -204,3 +204,49 @@ textarea { width: 100%; min-height: 9rem; }
   nav a { padding: .35rem .5rem; }
   .ligne-agenda .heure { min-width: 4.6rem; font-size: .8rem; }
 }
+
+/* demander à l'IA */
+.zone-ia { margin-top: .6rem; }
+.boite-ia { border: 1px solid var(--ligne); border-radius: var(--rayon); padding: .7rem; background: var(--fond); }
+.ia-titre { font-weight: 600; margin-bottom: .4rem; }
+.ia-fil { display: flex; flex-direction: column; gap: .45rem; max-height: 26rem; overflow-y: auto; margin-bottom: .5rem; }
+.ia-msg { padding: .5rem .75rem; border-radius: 12px; max-width: 92%; }
+.ia-msg.moi { align-self: flex-end; background: var(--accent-doux); border: 1px solid var(--accent); white-space: pre-wrap; }
+.ia-msg.ia { align-self: flex-start; background: var(--carte); border: 1px solid var(--ligne); }
+.ia-msg.ia > :first-child { margin-top: 0; }
+.ia-msg.ia > :last-child { margin-bottom: 0; }
+.ia-suggestions { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .5rem; }
+.ia-saisie { display: flex; gap: .5rem; align-items: flex-end; }
+.ia-saisie textarea { flex: 1; min-width: 0; font: inherit; padding: .45rem .6rem; border: 1px solid var(--ligne); border-radius: 8px;
+  background: var(--carte); color: var(--texte); resize: vertical; }
+
+/* leçons vivantes */
+.lecons-vide { text-align: center; padding: 1.4rem 1rem; }
+.lecons-vide p { max-width: 38rem; margin: .5rem auto; }
+.gros-emoji { font-size: 2.4rem; }
+.lecons-entete { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin-bottom: .8rem; }
+.lecons-entete .barre-progression { flex: 1; min-width: 8rem; }
+.barre-progression { height: 8px; background: var(--ligne); border-radius: 4px; overflow: hidden; }
+.barre-progression > div { height: 100%; background: var(--ok); border-radius: 4px; transition: width .3s; }
+.grille-lecons { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .6rem; }
+.carte-lecon { display: flex; flex-direction: column; gap: .3rem; text-align: left; font: inherit; color: var(--texte); cursor: pointer; position: relative; padding-top: 2.4rem; }
+.carte-lecon:hover { border-color: var(--accent); }
+.carte-lecon.lue { border-color: var(--ok); }
+.carte-lecon .petit { font-size: .82rem; }
+.num-lecon { position: absolute; top: .7rem; left: 1rem; width: 1.6rem; height: 1.6rem; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-doux); color: var(--accent); font-weight: 700; font-size: .85rem; }
+.carte-lecon.lue .num-lecon { background: var(--ok-doux); color: var(--ok); }
+.titre-lecon { font-size: 1.35rem; margin: .4rem 0 .3rem; }
+.accroche { font-size: 1.1rem; font-style: italic; color: var(--doux); border-left: 4px solid var(--accent); padding: .2rem 0 .2rem .8rem; margin: .4rem 0 1rem; }
+.texte-lecon { font-size: 1.02rem; line-height: 1.65; margin: .8rem 0; }
+.encadre { border-radius: var(--rayon); padding: .7rem 1rem; margin: .8rem 0; border-left: 4px solid; }
+.encadre > b { display: block; margin-bottom: .2rem; }
+.encadre .md > :first-child, .encadre p { margin-top: 0; }
+.encadre .md > :last-child, .encadre p:last-child { margin-bottom: 0; }
+.encadre.analogie { background: var(--accent-doux); border-color: var(--accent); }
+.encadre.exemple { background: var(--carte); border: 1px solid var(--ligne); border-left: 4px solid var(--ok); }
+.encadre.piege { background: var(--danger-doux); border-color: var(--danger); }
+.encadre.retenir { background: var(--ok-doux); border-color: var(--ok); font-weight: 600; }
+.encadre.defi { background: var(--alerte-doux); border-color: var(--alerte); }
+.encadre.defi details { margin-top: .5rem; }
+.nav-lecon { display: flex; justify-content: space-between; gap: .6rem; margin: 1.2rem 0; flex-wrap: wrap; }

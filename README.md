@@ -9,6 +9,10 @@ RevisUP tourne sur ton PC et fait tout seul :
    (cours, TD, TP, annales, corrigés) et extrait des messages des profs la salle, la durée, les documents autorisés et le programme.
 4. **Claude** : à partir des fichiers téléchargés, il produit une **fiche de synthèse**, des **exercices corrigés**
    dans le style des annales, un **QCM** interactif et une estimation du temps de révision par chapitre.
+   Puis il réécrit la fiche en **leçons vivantes**, une par chapitre : une situation concrète, une image pour
+   comprendre, un exemple résolu pas à pas, le piège à éviter, la phrase à retenir et un défi.
+   Sous chaque exercice, leçon ou question du quiz, **Demander à l'IA** ouvre une discussion avec un tuteur
+   (IA locale) qui donne des indices sans gâcher la réponse.
 5. **Planning** : tes sessions de révision sont placées dans tes trous d'EDT, avec une révision finale la veille de chaque examen.
 6. **Notifications** sur Windows et sur l'iPhone (app ntfy) : nouvel examen, examen déplacé, J-14/J-7/J-3/J-1,
    programme du matin, début de session.
@@ -27,7 +31,11 @@ Tout se consulte sur le tableau de bord **http://localhost:8765**.
    de LM Studio (commande `lms`) quand il en a besoin.
 5. Double-clique sur **`demarrage-auto.bat`** : RevisUP démarre sans fenêtre, maintenant et à chaque ouverture de
    session Windows (journal dans `data\serveur.log`). Pour le lancer une seule fois avec une console : `lancer.bat`.
-6. Messagerie (pour tes notes) : onglet **Notes** du tableau de bord, bouton **Se connecter avec l'ENT**.
+6. Messagerie (pour tes notes) : onglet **Notes** du tableau de bord, identifiant et mot de passe de l'ENT.
+   La session de l'ENT expire au bout de quelques heures ; avec la **reconnexion automatique**, RevisUP remplit
+   la page de l'ENT sans fenêtre et relit tes mails à chaque synchro. Le mot de passe est rangé dans le coffre de
+   Windows (jamais dans un fichier), et il n'est essayé qu'une fois : s'il est refusé, il est effacé (pas de blocage
+   du compte). Sans garder le mot de passe : bouton **ouvrir la page de l'ENT sur le PC**, à refaire à chaque expiration.
 7. Si Claude Code se déconnecte : **`claude-connexion.bat`**.
 
 ### Connexions

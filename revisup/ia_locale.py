@@ -119,6 +119,18 @@ class IALocale:
         m = re.search(r"(?s)\{.*\}", texte)
         return json.loads(m.group(0) if m else texte)
 
+    def discuter(self, systeme: str, messages: list[dict], max_tokens: int = 1000) -> str:
+        """Réponse en texte libre (tuteur) ; messages : [{"role": "user" | "assistant", "content": ...}]."""
+        corps = {"model": self.modele, "messages": [{"role": "system", "content": systeme}, *messages],
+                 "temperature": 0.4, "max_tokens": max_tokens}
+        if self.effort:
+            corps["reasoning_effort"] = self.effort
+            corps["max_tokens"] = max_tokens + 3000
+        r = requests.post(f"{self.url}/chat/completions", json=corps, timeout=self.timeout)
+        r.raise_for_status()
+        texte = r.json()["choices"][0]["message"].get("content") or ""
+        return re.sub(r"(?s)<think>.*?</think>", "", texte).strip()
+
     # ── 1. quel cours UPdago correspond à l'examen ? ──
     def associer_cours(self, matiere: str, titre: str, cours: list[dict]) -> dict | None:
         if not cours:
