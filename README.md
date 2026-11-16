@@ -1,4 +1,42 @@
-# 📚 RevisUP — ton assistant de révision (Université de Poitiers)
+# 📚 RevisUP — assistant de révision par IA pour étudiants (BUT, licence, Université de Poitiers)
+
+[![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Flask](https://img.shields.io/badge/Flask-web%20app-000000?logo=flask)](https://flask.palletsprojects.com/)
+[![Claude](https://img.shields.io/badge/IA-Claude%20%2B%20LM%20Studio-D97757)](https://www.anthropic.com/claude)
+[![PWA](https://img.shields.io/badge/PWA-iPhone%20%26%20Mac-5A0FC8)](#lapp-sur-liphone-web-app--notifications)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
+
+**RevisUP prépare tes examens à ta place** : il lit ton emploi du temps, repère les partiels et les contrôles,
+récupère tes cours sur Moodle, et l'IA en fait des **fiches de révision, des leçons, des QCM, des exercices
+corrigés et des annales corrigées**, puis un **planning de révision** qui s'adapte à ta semaine.
+Tout tourne sur ton PC : tes données restent chez toi.
+
+> 🇬🇧 *AI study assistant for university students: reads your timetable (ADE / iCal) and Moodle courses,
+> detects exams, and uses Claude + a local LLM (LM Studio) to generate revision sheets, lessons, quizzes,
+> worked exercises, corrected past papers and a weekly study plan. Self-hosted Flask web app with a PWA for
+> iPhone and Mac, push notifications and learning games. French UI.*
+
+| Tableau de bord | Notes et progression | Sur iPhone |
+|---|---|---|
+| ![Accueil : prochains examens, cours du jour et sessions de révision](docs/accueil.png) | ![Notes : moyennes et comparaison avec l'année précédente](docs/notes.png) | ![Application installée sur iPhone](docs/mobile-accueil.png) |
+| **QCM interactif** | **Jeux pour apprendre** | **Planning de révision** |
+| ![QCM corrigé avec explications](docs/examen-qcm.png) | ![Exercices R&T générés à l'infini, quiz chrono](docs/jeux.png) | ![Sessions placées dans les trous de l'emploi du temps](docs/planning.png) |
+
+<sub>Captures du mode démo (`python -m revisup demo`) : données fictives.</sub>
+
+## Ce que fait RevisUP
+
+- 📅 **Détection des examens** dans l'emploi du temps (ADE / UPplanning, iCal) et dans les messages des profs.
+- 📥 **Cours Moodle (UPdago)** : téléchargement et tri automatique (cours, TD, TP, annales, corrigés).
+- 🧠 **Packs de révision par Claude** : fiche de synthèse, leçons vivantes, exercices corrigés, QCM, points clés, pièges.
+- 📝 **Annales corrigées** question par question, avec le sujet affiché à côté.
+- 💬 **Tuteur IA** sous chaque exercice : indices, méthode, vérification de ta réponse.
+- 🗓️ **Planning de révision automatique** qui tient compte de tes cours, du sport et des trajets.
+- 📊 **Suivi des notes** (relevés ScoDoc lus dans tes mails) et analyse de ta progression.
+- 🎮 **Jeux** : quiz chrono, cartes mémoire (Leitner), exercices d'adressage IP, binaire, loi d'Ohm, Linux.
+- 📱 **Web app pour iPhone et Mac** (PWA) avec notifications push : rappels J-7/J-1, programme du jour.
+
+## Comment ça marche
 
 RevisUP tourne sur ton PC et fait tout seul :
 
