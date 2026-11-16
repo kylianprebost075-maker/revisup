@@ -87,8 +87,8 @@ def _texte_en_cache(chemin: Path, fichier: dict) -> dict:
     cache = chemin.with_name(chemin.name + ".texte.json")
     if cache.exists():
         donnees = json.loads(cache.read_text(encoding="utf-8"))
-        if donnees.get("modifie") == fichier.get("modifie"):
-            return donnees
+        if donnees.get("modifie") == fichier.get("modifie") and not donnees.get("erreur"):
+            return donnees  # un échec (bibliothèque manquante...) est retenté à la synchro suivante
     donnees = {**extraction.extraire(chemin), "modifie": fichier.get("modifie")}
     cache.write_text(json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
     return donnees

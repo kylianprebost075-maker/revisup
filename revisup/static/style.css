@@ -250,3 +250,21 @@ textarea { width: 100%; min-height: 9rem; }
 .encadre.defi { background: var(--alerte-doux); border-color: var(--alerte); }
 .encadre.defi details { margin-top: .5rem; }
 .nav-lecon { display: flex; justify-content: space-between; gap: .6rem; margin: 1.2rem 0; flex-wrap: wrap; }
+
+/* annale corrigée */
+.annale { margin-bottom: 1.4rem; }
+.annale-titre { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.annale-titre h3 { margin: .6rem 0; font-size: 1.15rem; }
+.partie-annale { margin: 1rem 0 .5rem; font-size: 1rem; }
+.q-annale { background: var(--carte); border: 1px solid var(--ligne); border-radius: var(--rayon); margin: .45rem 0; }
+.q-annale[open] { border-color: var(--accent); }
+.q-annale summary { display: flex; gap: .7rem; align-items: baseline; padding: .75rem 1rem; cursor: pointer; list-style: none; font-weight: 600; }
+.q-annale summary::-webkit-details-marker { display: none; }
+.q-annale summary::before { content: "+"; color: var(--accent); font-weight: 700; width: .8rem; }
+.q-annale[open] summary::before { content: "−"; }
+.num-q { color: var(--accent); font-family: ui-monospace, Consolas, monospace; }
+.corps-q { padding: 0 1rem .9rem 2.5rem; }
+.enonce-q { color: var(--doux); border-left: 3px solid var(--ligne); padding-left: .8rem; margin-bottom: .7rem; }
+.enonce-q > :first-child, .reponse-q .md > :first-child { margin-top: .3rem; }
+.reponse-q { line-height: 1.6; }
+@media (max-width: 600px) { .corps-q { padding-left: 1rem; } }

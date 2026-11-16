@@ -39,6 +39,8 @@ def _pdf(chemin: Path) -> dict:
     from pypdf import PdfReader
 
     lecteur = PdfReader(str(chemin))
+    if lecteur.is_encrypted:  # « autorisations limitées » : chiffré sans mot de passe d'ouverture
+        lecteur.decrypt("")
     pages = []
     for i, page in enumerate(lecteur.pages, 1):
         t = (page.extract_text() or "").strip()

@@ -127,30 +127,16 @@ def generer_lecons(cfg: dict, examen_id: str) -> int:
 
 
 def en_cours(examen_id: str) -> bool:
-    return examen_id in _en_cours
+    return f"leçons:{examen_id}" in _en_cours
 
 
 def lancer(cfg: dict, examen_id: str) -> bool:
-    """En arrière-plan (Claude met quelques minutes) ; une seule à la fois par examen."""
-    if examen_id in _en_cours:
-        return False
-    _en_cours.add(examen_id)
-
-    def travail():
-        try:
-            generer_lecons(cfg, examen_id)
-        except Exception as e:
-            journal(f"Leçons impossibles à créer ({type(e).__name__}: {e})", "erreur")
-        finally:
-            _en_cours.discard(examen_id)
-
-    threading.Thread(target=travail, daemon=True).start()
-    return True
+    return _lancer(f"leçons:{examen_id}", generer_lecons, cfg, examen_id)
 
 
 def lecons_a_creer(cfg: dict) -> None:
     """À chaque synchro : les leçons du prochain examen qui a un pack mais pas encore de leçons (une à la fois)."""
-    if _en_cours:
+    if any(c.startswith("leçons:") for c in _en_cours):
         return
     etat = store.lire()
     for ex in sorted(etat["examens"].values(), key=lambda e: e["debut"]):
@@ -160,6 +146,151 @@ def lecons_a_creer(cfg: dict) -> None:
         if pack and not pack.get("lecons"):
             lancer(cfg, ex["id"])
             return
+
+
+# ── annales corrigées ───────────────────────────────────────────────────
+
+SCHEMA_ANNALES = {
+    "type": "object",
+    "properties": {"annales": {"type": "array", "items": {
+        "type": "object",
+        "properties": {
+            "titre": {"type": "string"},
+            "fichier": {"type": "string"},
+            "parties": {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "titre": {"type": "string"},
+                    "questions": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "numero": {"type": "string"},
+                            "intitule": {"type": "string"},
+                            "enonce_markdown": {"type": "string"},
+                            "reponse_markdown": {"type": "string"},
+                            "corrige_du_prof": {"type": "boolean"},
+                        },
+                        "required": ["numero", "intitule", "enonce_markdown", "reponse_markdown", "corrige_du_prof"],
+                        "additionalProperties": False}},
+                },
+                "required": ["titre", "questions"],
+                "additionalProperties": False}},
+        },
+        "required": ["titre", "fichier", "parties"],
+        "additionalProperties": False}}},
+    "required": ["annales"],
+    "additionalProperties": False,
+}
+
+SYSTEME_ANNALES = """Tu corriges les anciens sujets d'examen (annales) d'un étudiant de BUT Réseaux & Télécoms, la veille de son examen. Il veut lire chaque question puis dérouler une réponse juste, claire et complète, comme un corrigé de prof.
+
+Pour chaque annale fournie (un fichier = une annale) :
+- titre : court et parlant (ex. « Examen final — 2022-2023 », « Test 1 — Modèle OSI ») ; fichier : le nom du fichier tel que donné.
+- parties : les parties du sujet dans l'ordre (ex. « 1. Modèle OSI et TCP/IP ») ; s'il n'y en a pas, une seule partie « Questions ».
+- TOUTES les questions, dans l'ordre, sans en sauter aucune. numero : « Q1 », « Q2 »… comme dans le sujet. intitule : 3 à 8 mots qui résument la question (ex. « Protocole pour transférer des pages web »).
+- enonce_markdown : l'énoncé complet et fidèle (données, adresses, tableaux en Markdown). Si une figure ou une capture manque dans le texte, écris-le : « (capture non lisible ici) ».
+- reponse_markdown : la réponse attendue d'abord (en gras), puis la justification ou la méthode pas à pas, les calculs détaillés (binaire si utile), et un tableau complet et corrigé quand la question est un tableau. Vérifie chaque calcul deux fois. Si une capture manque, réponds avec le cas le plus probable et dis-le.
+- corrige_du_prof : true si la réponse vient d'un corrigé fourni par l'enseignant (reprends-le fidèlement, complète l'explication si elle est trop sèche), false si c'est ta correction.
+Appuie-toi sur la fiche de révision du cours pour employer les mêmes notions et notations que le prof.
+En français ; formules en $...$ ; code et commandes entre ` ` ou dans des blocs ``` ; une balise HTML s'écrit entre ` `."""
+
+
+def _documents_annales(examen: dict) -> tuple[list[dict], list[dict]]:
+    """Annales et corrigés du cours de l'examen, avec leur texte (fichiers déjà téléchargés par la préparation)."""
+    from .preparation import _chemin_local, _texte_en_cache
+    etat = store.lire()
+    annales, corriges = [], []
+    for f in etat["updago"].get("fichiers", []):
+        cat = etat["classements_fichiers"].get(f["cle"])
+        if f["cours_id"] != examen.get("cours_id") or cat not in ("annale", "corrige"):
+            continue
+        chemin = _chemin_local(f, cat)
+        if not chemin.exists():
+            continue
+        texte = (_texte_en_cache(chemin, f).get("texte") or "").strip()
+        if texte:
+            (annales if cat == "annale" else corriges).append({"nom": f["nom"], "texte": texte[:40000]})
+    return annales, corriges
+
+
+def a_des_annales(examen: dict) -> bool:
+    etat = store.lire()
+    return any(f["cours_id"] == examen.get("cours_id") and etat["classements_fichiers"].get(f["cle"]) == "annale"
+               for f in etat["updago"].get("fichiers", []))
+
+
+def generer_annales(cfg: dict, examen_id: str) -> int:
+    pack, ex = store.lire_pack(examen_id), store.lire()["examens"].get(examen_id)
+    if not pack or not ex:
+        raise KeyError(examen_id)
+    annales, corriges = _documents_annales(ex)
+    if not annales:
+        raise RuntimeError("aucune annale lisible pour cet examen")
+    version = (pack.get("_meta") or {}).get("genere_le")
+    texte = (f"Matière : {ex['matiere']}\n\n"
+             + "".join(f"# ANNALE — fichier : {a['nom']}\n{a['texte']}\n\n" for a in annales)
+             + "".join(f"# CORRIGÉ DU PROF — fichier : {c['nom']}\n{c['texte']}\n\n" for c in corriges)
+             + f"# Fiche de révision du cours (référence)\n{pack.get('synthese_markdown', '')[:30000]}")
+    rep, _ = ia_claude.demander_json(cfg, SYSTEME_ANNALES, texte, SCHEMA_ANNALES)
+    resultat = []
+    for a in rep.get("annales", []):
+        parties = [{"titre": str(p.get("titre") or "Questions"), "questions": [
+            {k: (bool(q.get(k)) if k == "corrige_du_prof" else str(q.get(k) or "").strip())
+             for k in ("numero", "intitule", "enonce_markdown", "reponse_markdown", "corrige_du_prof")}
+            for q in p.get("questions", []) if q.get("reponse_markdown")]} for p in a.get("parties", [])]
+        parties = [p for p in parties if p["questions"]]
+        if parties:
+            resultat.append({"titre": str(a.get("titre") or a.get("fichier")), "fichier": str(a.get("fichier") or ""),
+                             "parties": parties})
+    if not resultat:
+        raise RuntimeError("aucune question corrigée reçue")
+    pack = store.lire_pack(examen_id)
+    if not pack or (pack.get("_meta") or {}).get("genere_le") != version:
+        return 0
+    pack["annales"] = resultat
+    store.ecrire_pack(examen_id, pack)
+    nb = sum(len(p["questions"]) for a in resultat for p in a["parties"])
+    journal(f"Annales : {len(resultat)} annale(s) corrigée(s), {nb} questions, pour {ex['matiere']}")
+    return nb
+
+
+def lancer_annales(cfg: dict, examen_id: str) -> bool:
+    return _lancer(f"annales:{examen_id}", generer_annales, cfg, examen_id)
+
+
+def annales_en_cours(examen_id: str) -> bool:
+    return f"annales:{examen_id}" in _en_cours
+
+
+def annales_a_creer(cfg: dict) -> None:
+    """À chaque synchro : l'annale corrigée du prochain examen qui a des annales mais pas encore de corrigé."""
+    if any(c.startswith("annales:") for c in _en_cours):
+        return
+    for ex in sorted(store.lire()["examens"].values(), key=lambda e: e["debut"]):
+        if ex["debut"] < maintenant().isoformat() or ex.get("ignore") or not store.chemin_pack(ex["id"]).exists():
+            continue
+        pack = store.lire_pack(ex["id"])
+        if pack and not pack.get("annales") and a_des_annales(ex):
+            lancer_annales(cfg, ex["id"])
+            return
+
+
+def _lancer(cle: str, fonction, cfg: dict, examen_id: str) -> bool:
+    """En arrière-plan (Claude met quelques minutes) ; une seule tâche de chaque sorte par examen."""
+    if cle in _en_cours:
+        return False
+    _en_cours.add(cle)
+
+    def travail():
+        try:
+            fonction(cfg, examen_id)
+        except Exception as e:
+            journal(f"{cle.split(':')[0].capitalize()} impossibles à créer ({type(e).__name__}: {e})", "erreur")
+        finally:
+            _en_cours.discard(cle)
+
+    threading.Thread(target=travail, daemon=True).start()
+    return True
 
 
 def marquer_lue(examen_id: str, index: int, lue: bool) -> list[int]:

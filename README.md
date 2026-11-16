@@ -11,6 +11,8 @@ RevisUP tourne sur ton PC et fait tout seul :
    dans le style des annales, un **QCM** interactif et une estimation du temps de révision par chapitre.
    Puis il réécrit la fiche en **leçons vivantes**, une par chapitre : une situation concrète, une image pour
    comprendre, un exemple résolu pas à pas, le piège à éviter, la phrase à retenir et un défi.
+   S'il y a des annales, il les corrige question par question (**Annale corrigée** : chaque réponse se déroule,
+   d'après le corrigé du prof quand il existe).
    Sous chaque exercice, leçon ou question du quiz, **Demander à l'IA** ouvre une discussion avec un tuteur
    (IA locale) qui donne des indices sans gâcher la réponse.
 5. **Planning** : tes sessions de révision sont placées dans tes trous d'EDT, avec une révision finale la veille de chaque examen.

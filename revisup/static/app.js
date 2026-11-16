@@ -234,6 +234,7 @@ async function vueExamen(id) {
   try { data = await api(`/api/examen/${encodeURIComponent(id)}`); }
   catch { vue.innerHTML = `<p class="vide">Examen introuvable.</p>`; return; }
   const { examen: e, pack, messages, documents, cours, lecons_en_cours, lecons_lues } = data;
+  const avecAnnales = pack && (pack.annales?.length || data.a_des_annales || documents.some((x) => x.categorie === "annale"));
   const infos = e.infos || {};
   const occupe = !!ETAT.tache.nom;
   const lignesInfos = [["Salle", infos.salle || e.salle], ["Durée", infos.duree], ["Documents autorisés", infos.documents_autorises],
@@ -279,6 +280,7 @@ async function vueExamen(id) {
 
     ${pack ? `<div class="onglets" id="onglets">
         <button data-o="lecons" class="actif">🎓 Leçons</button>
+        ${avecAnnales ? `<button data-o="annales">📝 Annale corrigée</button>` : ""}
         <button data-o="synthese">Fiche</button>
         <button data-o="exercices">Exercices (${pack.exercices.length})</button>
         <button data-o="qcm">QCM (${pack.qcm.length})</button>
@@ -289,6 +291,7 @@ async function vueExamen(id) {
 
   const onglets = {
     lecons: () => `<div id="lecons"></div>`,
+    annales: () => `<div id="annales"></div>`,
     synthese: () => `<div class="carte md">${md(pack.synthese_markdown)}</div>`,
     exercices: () => pack.exercices.map((x, i) => `<div class="carte" style="margin-bottom:.7rem">
         <h3 style="margin-top:0">${i + 1}. ${esc(x.titre)} <span class="badge ${x.difficulte === "difficile" ? "danger" : x.difficulte === "moyen" ? "alerte" : "ok"}">${esc(x.difficulte)}</span>
@@ -314,6 +317,7 @@ async function vueExamen(id) {
       zone.innerHTML = onglets[o]();
       if (o === "qcm") qcm(pack.qcm, $("#qcm"));
       if (o === "lecons") vueLecons($("#lecons"), e, pack, lecons_en_cours, lecons_lues);
+      if (o === "annales") vueAnnales($("#annales"), e, pack, data.annales_en_cours, documents);
       if (o === "exercices") zone.querySelectorAll("[data-ex]").forEach((z) => {
         const x = pack.exercices[+z.dataset.ex];
         boiteIA(z, { type: "exercice", matiere: e.matiere, titre: x.titre, enonce: x.enonce_markdown, corrige: x.corrige_markdown });
@@ -532,6 +536,65 @@ function vueLecons(el, e, pack, enCours, lues) {
     el.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   sommaire();
+}
+
+// ── annale corrigée : chaque question du sujet, sa réponse à dérouler, et l'IA pour poser une question ──
+function vueAnnales(el, e, pack, enCours, documents) {
+  const A = pack.annales || [];
+  const lienSujet = (fichier) => {
+    const doc = documents.find((x) => x.local && (x.nom === fichier || fichier.includes(x.nom) || x.nom.includes(fichier)));
+    return doc ? `<a class="btn petit" href="/fichiers/${doc.local.split("/").map(encodeURIComponent).join("/")}" target="_blank">📄 Ouvrir le sujet</a>` : "";
+  };
+  if (!A.length) {
+    el.innerHTML = `<div class="carte lecons-vide"><div class="gros-emoji">📝</div>
+      <h3>Les annales de ce cours, corrigées question par question</h3>
+      <p>Claude reprend chaque ancien sujet : l'énoncé de chaque question, et sa réponse détaillée à dérouler
+        (d'après le corrigé du prof quand il existe). Avec l'IA pour poser tes questions.</p>
+      ${enCours ? `<p><b>⏳ Claude corrige les annales…</b> <span class="doux">(quelques minutes ; la page se met à jour toute seule)</span></p>`
+        : `<button class="btn principal" id="a-creer">✨ Corriger les annales</button>`}</div>`;
+    const b = $("#a-creer");
+    if (b) b.onclick = async () => {
+      const r = await post(`/api/examen/${encodeURIComponent(e.id)}/annales`);
+      if (!r.ok) toast(r.message);
+      vueAnnales(el, e, pack, true, documents);
+    };
+    clearTimeout(el._attente);
+    if (enCours || !b) el._attente = setTimeout(async () => {
+      if (!document.body.contains(el)) return;
+      const d = await api(`/api/examen/${encodeURIComponent(e.id)}`).catch(() => null);
+      if (d) vueAnnales(el, e, d.pack, d.annales_en_cours ?? true, d.documents);
+    }, 20000);
+    return;
+  }
+  const nb = A.reduce((s, a) => s + a.parties.reduce((t, p) => t + p.questions.length, 0), 0);
+  el.innerHTML = `<div class="lecons-entete"><b>${A.length} annale${A.length > 1 ? "s" : ""} · ${nb} questions corrigées</b>
+      <span style="flex:1"></span><button class="btn petit" id="a-tout">Tout déplier</button></div>
+    ${A.map((a, ia) => `<section class="annale">
+      <div class="annale-titre"><h3>${esc(a.titre)}</h3>${lienSujet(a.fichier)}</div>
+      ${a.parties.map((p, ip) => `<h4 class="partie-annale">${esc(p.titre)}</h4>
+        ${p.questions.map((q, iq) => `<details class="q-annale" data-q="${ia}-${ip}-${iq}">
+          <summary><span class="num-q">${esc(q.numero)}</span><span class="intitule-q">${esc(q.intitule)}</span></summary>
+          <div class="corps-q">
+            <div class="enonce-q md">${md(q.enonce_markdown)}</div>
+            <div class="reponse-q"><span class="badge ${q.corrige_du_prof ? "ok" : ""}">${q.corrige_du_prof ? "✔ corrigé du prof" : "corrigé par Claude"}</span>
+              <div class="md">${md(q.reponse_markdown)}</div></div>
+            <div class="zone-ia"></div></div></details>`).join("")}`).join("")}</section>`).join("")}`;
+  const kat = (z) => window.renderMathInElement && renderMathInElement(z, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }] });
+  kat(el);
+  el.querySelectorAll(".q-annale").forEach((d) => d.addEventListener("toggle", () => {
+    const z = d.querySelector(".zone-ia");
+    if (!d.open || z.dataset.pret) return;
+    z.dataset.pret = "1";
+    const [ia, ip, iq] = d.dataset.q.split("-").map(Number), q = A[ia].parties[ip].questions[iq];
+    boiteIA(z, { type: "exercice", matiere: e.matiere, titre: `${A[ia].titre} — ${q.numero} ${q.intitule}`,
+      enonce: q.enonce_markdown, corrige: q.reponse_markdown },
+      ["Je ne comprends pas la correction", "Explique-moi la méthode", "Donne-moi un exercice du même type"]);
+  }));
+  $("#a-tout").onclick = (ev) => {
+    const ouvrir = ev.target.textContent === "Tout déplier";
+    el.querySelectorAll(".q-annale").forEach((d) => (d.open = ouvrir));
+    ev.target.textContent = ouvrir ? "Tout replier" : "Tout déplier";
+  };
 }
 
 // pendant que Claude écrit les leçons : on revérifie toutes les 20 s, tant que l'onglet est affiché

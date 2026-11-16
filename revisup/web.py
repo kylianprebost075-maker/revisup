@@ -34,6 +34,7 @@ def tout(cfg: dict) -> None:
     preparation.preparer_tout(cfg)
     jeux.cartes_a_creer(cfg)  # cartes mémoire des nouveaux packs, en arrière-plan
     tuteur.lecons_a_creer(cfg)  # leçons vivantes du prochain examen, en arrière-plan
+    tuteur.annales_a_creer(cfg)  # annales corrigées du prochain examen qui en a
     planning.generer(cfg)
     rappels.verifier(cfg)
 
@@ -193,7 +194,16 @@ def api_examen(eid):
     cours = sorted(etat["updago"].get("cours", []), key=lambda c: -_similarite(ex["matiere"], c["nom"]))
     return jsonify({"examen": _resume_examen(ex), "pack": store.lire_pack(eid), "messages": messages,
                     "documents": docs, "cours": [{"id": c["id"], "nom": c["nom"]} for c in cours],
-                    "lecons_en_cours": tuteur.en_cours(eid), "lecons_lues": etat.get("lecons_lues", {}).get(eid, [])})
+                    "lecons_en_cours": tuteur.en_cours(eid), "lecons_lues": etat.get("lecons_lues", {}).get(eid, []),
+                    "annales_en_cours": tuteur.annales_en_cours(eid), "a_des_annales": tuteur.a_des_annales(ex)})
+
+
+@app.post("/api/examen/<eid>/annales")
+def api_annales(eid):
+    if not store.lire_pack(eid):
+        abort(404)
+    ok = tuteur.lancer_annales(app.config["CFG"], eid)
+    return jsonify({"ok": ok, "message": None if ok else "L'annale corrigée est déjà en préparation."})
 
 
 @app.post("/api/examen/<eid>/lecons")
