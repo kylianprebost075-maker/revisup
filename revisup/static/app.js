@@ -91,6 +91,7 @@ async function router() {
   if (!ETAT) return;
   const [chemin, requete] = location.hash.split("?");
   const [, page, id, sous] = chemin.split("/");
+  document.querySelector("main").classList.remove("large");  // l'annale corrigée l'élargit (sujet + corrigé)
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("actif",
     a.dataset.onglet === (page === "examen" ? "examens" : page || "accueil")));
   if (page === "journee") return vueJournee(new URLSearchParams(requete || "").get("choix"));
@@ -314,6 +315,7 @@ async function vueExamen(id) {
   if (pack) {
     const afficher = (o) => {
       document.querySelectorAll("#onglets button").forEach((b) => b.classList.toggle("actif", b.dataset.o === o));
+      document.querySelector("main").classList.remove("large");
       zone.innerHTML = onglets[o]();
       if (o === "qcm") qcm(pack.qcm, $("#qcm"));
       if (o === "lecons") vueLecons($("#lecons"), e, pack, lecons_en_cours, lecons_lues);
@@ -541,10 +543,6 @@ function vueLecons(el, e, pack, enCours, lues) {
 // ── annale corrigée : chaque question du sujet, sa réponse à dérouler, et l'IA pour poser une question ──
 function vueAnnales(el, e, pack, enCours, documents) {
   const A = pack.annales || [];
-  const lienSujet = (fichier) => {
-    const doc = documents.find((x) => x.local && (x.nom === fichier || fichier.includes(x.nom) || x.nom.includes(fichier)));
-    return doc ? `<a class="btn petit" href="/fichiers/${doc.local.split("/").map(encodeURIComponent).join("/")}" target="_blank">📄 Ouvrir le sujet</a>` : "";
-  };
   if (!A.length) {
     el.innerHTML = `<div class="carte lecons-vide"><div class="gros-emoji">📝</div>
       <h3>Les annales de ce cours, corrigées question par question</h3>
@@ -566,34 +564,120 @@ function vueAnnales(el, e, pack, enCours, documents) {
     }, 20000);
     return;
   }
-  const nb = A.reduce((s, a) => s + a.parties.reduce((t, p) => t + p.questions.length, 0), 0);
-  el.innerHTML = `<div class="lecons-entete"><b>${A.length} annale${A.length > 1 ? "s" : ""} · ${nb} questions corrigées</b>
-      <span style="flex:1"></span><button class="btn petit" id="a-tout">Tout déplier</button></div>
-    ${A.map((a, ia) => `<section class="annale">
-      <div class="annale-titre"><h3>${esc(a.titre)}</h3>${lienSujet(a.fichier)}</div>
-      ${a.parties.map((p, ip) => `<h4 class="partie-annale">${esc(p.titre)}</h4>
-        ${p.questions.map((q, iq) => `<details class="q-annale" data-q="${ia}-${ip}-${iq}">
-          <summary><span class="num-q">${esc(q.numero)}</span><span class="intitule-q">${esc(q.intitule)}</span></summary>
-          <div class="corps-q">
-            <div class="enonce-q md">${md(q.enonce_markdown)}</div>
-            <div class="reponse-q"><span class="badge ${q.corrige_du_prof ? "ok" : ""}">${q.corrige_du_prof ? "✔ corrigé du prof" : "corrigé par Claude"}</span>
-              <div class="md">${md(q.reponse_markdown)}</div></div>
-            <div class="zone-ia"></div></div></details>`).join("")}`).join("")}</section>`).join("")}`;
-  const kat = (z) => window.renderMathInElement && renderMathInElement(z, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }] });
-  kat(el);
-  el.querySelectorAll(".q-annale").forEach((d) => d.addEventListener("toggle", () => {
-    const z = d.querySelector(".zone-ia");
-    if (!d.open || z.dataset.pret) return;
-    z.dataset.pret = "1";
-    const [ia, ip, iq] = d.dataset.q.split("-").map(Number), q = A[ia].parties[ip].questions[iq];
-    boiteIA(z, { type: "exercice", matiere: e.matiere, titre: `${A[ia].titre} — ${q.numero} ${q.intitule}`,
-      enonce: q.enonce_markdown, corrige: q.reponse_markdown },
-      ["Je ne comprends pas la correction", "Explique-moi la méthode", "Donne-moi un exercice du même type"]);
-  }));
-  $("#a-tout").onclick = (ev) => {
-    const ouvrir = ev.target.textContent === "Tout déplier";
-    el.querySelectorAll(".q-annale").forEach((d) => (d.open = ouvrir));
-    ev.target.textContent = ouvrir ? "Tout replier" : "Tout déplier";
+  document.querySelector("main").classList.add("large");
+  let choisie = 0;
+  const dessiner = () => {
+    const a = A[choisie], doc = docSujet(a.fichier);
+    const nb = a.parties.reduce((t, p) => t + p.questions.length, 0);
+    el.innerHTML = `
+      ${A.length > 1 ? `<div class="choix-annale">${A.map((x, i) => `<button class="btn ${i === choisie ? "principal" : ""}" data-annale="${i}">${esc(x.titre)}</button>`).join("")}</div>` : ""}
+      <div class="bascule-mobile" role="tablist">
+        <button class="actif" data-pane="corrige">✅ Corrigé</button><button data-pane="sujet" ${doc ? "" : "disabled"}>📄 Sujet</button></div>
+      <div class="annales-split ${doc ? "" : "sans-sujet"}" data-vue="corrige">
+        ${doc ? `<div class="pane-sujet"><div class="sujet-barre"><b>📄 ${esc(a.titre)}</b><span class="doux" id="s-page"></span>
+            <a class="btn petit" href="${doc}" target="_blank">Ouvrir à part</a></div>
+          <div class="sujet-pages" id="s-pages"><p class="doux">Chargement du sujet…</p></div></div>` : ""}
+        <div class="pane-corrige">
+          <div class="lecons-entete"><b>${nb} questions corrigées</b><span style="flex:1"></span>
+            <button class="btn petit" id="a-tout">Tout déplier</button></div>
+          ${a.parties.map((p, ip) => `<h4 class="partie-annale">${esc(p.titre)}</h4>
+            ${p.questions.map((q, iq) => `<details class="q-annale" data-q="${ip}-${iq}">
+              <summary><span class="num-q">${esc(q.numero)}</span><span class="intitule-q">${esc(q.intitule)}</span></summary>
+              <div class="corps-q">
+                <div class="enonce-q md">${md(q.enonce_markdown)}</div>
+                <div class="reponse-q"><span class="badge ${q.corrige_du_prof ? "ok" : ""}">${q.corrige_du_prof ? "✔ corrigé du prof" : "corrigé par Claude"}</span>
+                  ${doc ? `<button class="btn petit voir-sujet" data-numero="${esc(q.numero)}">📄 Voir dans le sujet</button>` : ""}
+                  <div class="md">${md(q.reponse_markdown)}</div></div>
+                <div class="zone-ia"></div></div></details>`).join("")}`).join("")}</div></div>`;
+    if (window.renderMathInElement) renderMathInElement(el, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }] });
+    const split = el.querySelector(".annales-split");
+    const vue = (v) => { split.dataset.vue = v; el.querySelectorAll("[data-pane]").forEach((b) => b.classList.toggle("actif", b.dataset.pane === v)); };
+    el.querySelectorAll("[data-pane]").forEach((b) => (b.onclick = () => vue(b.dataset.pane)));
+    el.querySelectorAll("[data-annale]").forEach((b) => (b.onclick = () => { choisie = +b.dataset.annale; dessiner(); }));
+    const lecteur = doc ? lecteurPdf($("#s-pages"), doc, $("#s-page")) : null;
+    el.querySelectorAll(".q-annale").forEach((d) => d.addEventListener("toggle", () => {
+      if (!d.open) return;
+      const [ip, iq] = d.dataset.q.split("-").map(Number), q = a.parties[ip].questions[iq];
+      if (lecteur && !estMobile()) lecteur.allerA(q.numero);  // à côté : le sujet suit la question ouverte
+      const z = d.querySelector(".zone-ia");
+      if (z.dataset.pret) return;
+      z.dataset.pret = "1";
+      boiteIA(z, { type: "exercice", matiere: e.matiere, titre: `${a.titre} — ${q.numero} ${q.intitule}`,
+        enonce: q.enonce_markdown, corrige: q.reponse_markdown },
+        ["Je ne comprends pas la correction", "Explique-moi la méthode", "Donne-moi un exercice du même type"]);
+    }));
+    el.querySelectorAll(".voir-sujet").forEach((b) => (b.onclick = () => {
+      vue("sujet");
+      lecteur.allerA(b.dataset.numero);
+      if (estMobile()) el.querySelector(".bascule-mobile").scrollIntoView({ block: "start" });
+    }));
+    $("#a-tout").onclick = (ev) => {
+      const ouvrir = ev.target.textContent === "Tout déplier";
+      el.querySelectorAll(".q-annale").forEach((d) => (d.open = ouvrir));
+      ev.target.textContent = ouvrir ? "Tout replier" : "Tout déplier";
+    };
+  };
+  const docSujet = (fichier) => {
+    const d = documents.find((x) => x.local && /\.pdf$/i.test(x.local) && (x.nom === fichier || fichier.includes(x.nom) || x.nom.includes(fichier)));
+    return d ? `/fichiers/${d.local.split("/").map(encodeURIComponent).join("/")}` : null;
+  };
+  dessiner();
+}
+
+const estMobile = () => window.matchMedia("(max-width: 900px)").matches;
+
+// ── lecteur de PDF (PDF.js, chargé à la demande) : toutes les pages, et saut à la page d'une question ──
+let _pdfjs = null;
+function chargerPdfjs() {
+  _pdfjs ||= new Promise((ok, ko) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload = () => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      ok(pdfjsLib);
+    };
+    s.onerror = () => { _pdfjs = null; ko(new Error("lecteur PDF indisponible (pas de connexion ?)")); };
+    document.head.appendChild(s);
+  });
+  return _pdfjs;
+}
+
+function lecteurPdf(zone, url, info) {
+  const textes = [];  // texte de chaque page, pour trouver où est « Q9 »
+  let pret;
+  const charge = (async () => {
+    const lib = await chargerPdfjs();
+    const pdf = await lib.getDocument(url).promise;
+    zone.innerHTML = "";
+    const largeur = Math.max(320, (zone.clientWidth || window.innerWidth) - 16);
+    const aDessiner = [];
+    for (let n = 1; n <= pdf.numPages; n++) {  // d'abord le texte et la place de chaque page : le saut marche tout de suite
+      const page = await pdf.getPage(n);
+      textes[n] = (await page.getTextContent()).items.map((x) => x.str).join(" ");
+      const vp = page.getViewport({ scale: (largeur / page.getViewport({ scale: 1 }).width) * (window.devicePixelRatio || 1) });
+      const c = document.createElement("canvas");
+      c.width = vp.width; c.height = vp.height;
+      c.className = "page-pdf"; c.dataset.page = n;
+      zone.appendChild(c);
+      aDessiner.push(() => page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise);
+    }
+    if (info) info.textContent = `${pdf.numPages} page${pdf.numPages > 1 ? "s" : ""}`;
+    (async () => { for (const d of aDessiner) await d(); })();  // puis le dessin, page par page, en arrière-plan
+  })().catch((err) => { zone.innerHTML = `<p class="doux">${esc(err.message)} — <a href="${url}" target="_blank">ouvrir le sujet</a></p>`; });
+  return {
+    allerA: async (numero) => {
+      await charge;
+      const n = String(numero).replace(/\D/g, "");
+      // « Q9 : », « Question 9. », sinon « 9. » (sujets numérotés sans Q)
+      const motifs = [new RegExp(`\\b(?:Q|Question)\\s*${n}\\s*[:.)-]`, "i"), new RegExp(`(?:^|\\s)${n}\\s*[.)]\\s`)];
+      let page = -1;
+      for (const m of motifs) if (page < 0) page = textes.findIndex((t) => t && m.test(t));
+      const c = zone.querySelector(`[data-page="${page > 0 ? page : 1}"]`);
+      if (!c) return;
+      zone.scrollTo({ top: c.offsetTop - 8, behavior: "smooth" });
+      if (estMobile()) c.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (info && page > 0) info.textContent = `${numero} → page ${page}`;
+    },
   };
 }
 
