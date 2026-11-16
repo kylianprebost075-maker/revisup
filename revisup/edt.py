@@ -54,10 +54,19 @@ def matiere_depuis_titre(titre: str, motif: re.Pattern) -> str:
 # ── iCal ────────────────────────────────────────────────────────────────
 
 def telecharger_ical(url: str) -> str:
-    r = requests.get(url, timeout=60, headers={"User-Agent": "RevisUP/1.0"})
-    r.raise_for_status()
-    r.encoding = r.encoding or "utf-8"
-    return r.text
+    """UPplanning répond souvent 502/503 ou rien du tout quelques instants : on réessaie avant d'abandonner."""
+    import time
+    for attente in (20, 60, None):
+        try:
+            r = requests.get(url, timeout=60, headers={"User-Agent": "RevisUP/1.0"})
+            if r.status_code < 500 or attente is None:
+                r.raise_for_status()
+                r.encoding = r.encoding or "utf-8"
+                return r.text
+        except (requests.ConnectionError, requests.Timeout):
+            if attente is None:
+                raise
+        time.sleep(attente)
 
 
 def _vers_paris(valeur) -> datetime | None:
