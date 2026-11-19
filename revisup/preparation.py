@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import extraction, ia_claude, notifications, store
+from . import ajouts, extraction, ia_claude, notifications, store
 from .ia_locale import IALocale, _similarite
 from .store import DOSSIER_COURS, jolie_date, journal, maintenant, slug
 from .synchro import client_updago
@@ -98,8 +98,9 @@ def rassembler_documents(cfg: dict, examen: dict, ia: IALocale) -> list[dict]:
     etat = store.lire()
     fichiers = [f for f in etat["updago"].get("fichiers", []) if f["cours_id"] == examen.get("cours_id")]
     fichiers = [f for f in fichiers if not f.get("mime", "").startswith(MIMES_IGNORES) and f.get("taille", 0) <= TAILLE_MAX_FICHIER]
+    ajoutes = ajouts.documents(examen["id"])  # ajoutés à la main (fichiers du PC, photos)
     if not fichiers:
-        return []
+        return ajoutes
 
     # classement (mis en cache : un fichier n'est classé qu'une fois)
     cache = etat["classements_fichiers"]
@@ -129,7 +130,7 @@ def rassembler_documents(cfg: dict, examen: dict, ia: IALocale) -> list[dict]:
         texte = _texte_en_cache(chemin, f)
         documents.append({"nom": f["nom"], "categorie": categorie, "section": f["section"], "chemin": str(chemin),
                           "url": f["url"], **{k: texte.get(k) for k in ("texte", "pages", "scanne", "erreur")}})
-    return documents
+    return documents + ajoutes
 
 
 def preparer_examen(cfg: dict, examen_id: str, reutiliser: bool = False) -> dict | None:

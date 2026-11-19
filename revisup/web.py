@@ -10,13 +10,14 @@ from pathlib import Path
 
 from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory
 
-from . import (config, ia_claude, jeux, journee, notes, notifications, planning, preparation, push, rappels, sante,
+from . import (ajouts, config, ia_claude, jeux, journee, notes, notifications, planning, preparation, push, rappels, sante,
                store, synchro, tuteur)
 from .ia_locale import IALocale, _similarite
 from .store import DOSSIER_COURS, maintenant
 
 STATIC = Path(__file__).parent / "static"
 app = Flask(__name__, static_folder=None)
+app.config["MAX_CONTENT_LENGTH"] = 80_000_000  # photos de plusieurs pages prises au téléphone
 _tache = {"nom": None, "depuis": None}
 _verrou_tache = threading.Lock()
 
@@ -191,11 +192,37 @@ def api_examen(eid):
             local = preparation._chemin_local(f, cat) if cat != "?" else None
             docs.append({"nom": f["nom"], "categorie": cat, "section": f["section"], "taille": f["taille"],
                          "local": str(local.relative_to(DOSSIER_COURS)).replace("\\", "/") if local and local.exists() else None})
+    for a in etat.get("ajouts", {}).get(eid, []):  # ajoutés à la main (fichiers du PC, photos)
+        docs.append({"nom": a["nom"], "categorie": a["categorie"], "section": "ajouté par toi", "taille": a["taille"],
+                     "local": a["local"] if (DOSSIER_COURS / a["local"]).exists() else None, "ajout_id": a["id"],
+                     "lecture": a.get("texte"), "erreur": a.get("erreur"), "photos": a.get("photos", 0)})
     cours = sorted(etat["updago"].get("cours", []), key=lambda c: -_similarite(ex["matiere"], c["nom"]))
     return jsonify({"examen": _resume_examen(ex), "pack": store.lire_pack(eid), "messages": messages,
                     "documents": docs, "cours": [{"id": c["id"], "nom": c["nom"]} for c in cours],
                     "lecons_en_cours": tuteur.en_cours(eid), "lecons_lues": etat.get("lecons_lues", {}).get(eid, []),
                     "annales_en_cours": tuteur.annales_en_cours(eid), "a_des_annales": tuteur.a_des_annales(ex)})
+
+
+@app.post("/api/examen/<eid>/documents")
+def api_ajouter_documents(eid):
+    """Fichiers du PC ou photos (plusieurs photos envoyées ensemble = un seul document)."""
+    if eid not in store.lire()["examens"]:
+        abort(404)
+    try:
+        nouveaux = ajouts.ajouter(app.config["CFG"], eid, request.form.get("categorie", "cours"), request.form.get("titre", ""),
+                                  [(f.filename or "document", f.read()) for f in request.files.getlist("fichiers")])
+    except ValueError as e:
+        return jsonify({"ok": False, "message": str(e)}), 400
+    return jsonify({"ok": True, "ajouts": nouveaux, "pack": bool(store.lire_pack(eid))})
+
+
+@app.delete("/api/examen/<eid>/documents/<aid>")
+def api_supprimer_document(eid, aid):
+    try:
+        ajouts.supprimer(eid, aid)
+    except KeyError:
+        abort(404)
+    return jsonify({"ok": True})
 
 
 @app.post("/api/examen/<eid>/annales")

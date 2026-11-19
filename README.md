@@ -30,6 +30,7 @@ Tout tourne sur ton PC : tes données restent chez toi.
 - 📥 **Cours Moodle (UPdago)** : téléchargement et tri automatique (cours, TD, TP, annales, corrigés).
 - 🧠 **Packs de révision par Claude** : fiche de synthèse, leçons vivantes, exercices corrigés, QCM, points clés, pièges.
 - 📝 **Annales corrigées** question par question, avec le sujet affiché à côté.
+- 📎 **Documents manquants** : ajoute un fichier du PC ou prends les pages en photo ; Claude les retranscrit.
 - 💬 **Tuteur IA** sous chaque exercice : indices, méthode, vérification de ta réponse.
 - 🗓️ **Planning de révision automatique** qui tient compte de tes cours, du sport et des trajets.
 - 📊 **Suivi des notes** (relevés ScoDoc lus dans tes mails) et analyse de ta progression.

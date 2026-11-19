@@ -308,3 +308,18 @@ main.large { max-width: 1600px; }
   .choix-annale .btn { flex: 1 1 auto; }
   .reponse-q .voir-sujet { margin: .4rem 0 0; display: inline-block; }
 }
+
+/* il manque un document : fichiers du PC et photos */
+.ajout-doc { margin-top: 1rem; }
+.ajout-doc summary { cursor: pointer; display: flex; gap: .5rem; flex-wrap: wrap; align-items: baseline; }
+.boutons-ajout { display: flex; gap: .5rem; flex-wrap: wrap; margin: .7rem 0 .4rem; }
+.boutons-ajout .btn { cursor: pointer; }
+.vignettes { display: flex; gap: .5rem; flex-wrap: wrap; margin: .5rem 0; }
+.vignette { position: relative; width: 92px; height: 120px; border-radius: 8px; overflow: hidden; border: 1px solid var(--ligne); background: var(--fond); }
+.vignette img { width: 100%; height: 100%; object-fit: cover; }
+.vignette span { position: absolute; left: 4px; bottom: 4px; background: rgba(0,0,0,.6); color: #fff; font-size: .75rem; padding: 0 .35rem; border-radius: 6px; }
+.vignette button { position: absolute; top: 4px; right: 4px; }
+.liste-ajouts { list-style: none; padding: 0; margin: .6rem 0 0; display: grid; gap: .35rem; }
+.liste-ajouts li { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; padding: .4rem .6rem; border: 1px solid var(--ligne); border-radius: 8px; }
+.liste-ajouts li a { flex: 1; min-width: 10rem; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .boutons-ajout .btn { flex: 1 1 100%; text-align: center; padding: .7rem; } }

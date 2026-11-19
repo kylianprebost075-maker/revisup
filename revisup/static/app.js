@@ -279,6 +279,8 @@ async function vueExamen(id) {
           <button class="btn">Enregistrer</button></form></details>
     </div>
 
+    ${blocAjouts(documents)}
+
     ${pack ? `<div class="onglets" id="onglets">
         <button data-o="lecons" class="actif">🎓 Leçons</button>
         ${avecAnnales ? `<button data-o="annales">📝 Annale corrigée</button>` : ""}
@@ -331,6 +333,8 @@ async function vueExamen(id) {
     zone.innerHTML = sources(messages, documents, null);
   }
 
+  brancherAjouts(e, documents, !!pack);
+
   $("#btn-preparer").onclick = async () => {
     const r = await post(`/api/examen/${encodeURIComponent(e.id)}/preparer`);
     toast(r.ok ? "Préparation lancée : IA locale (tri, messages, fichiers) puis Claude. Ça peut prendre quelques minutes." : r.message);
@@ -359,6 +363,94 @@ async function vueExamen(id) {
       toast("Pack importé !"); await charger(); router();
     } catch (err) { toast(err.message); }
   };
+}
+
+// ── il manque un document : fichiers du PC, ou photos (plusieurs photos = un seul document) ──────
+const CATEGORIES_AJOUT = [["cours", "Cours"], ["td", "TD"], ["tp", "TP"], ["annale", "Annale (ancien sujet)"], ["corrige", "Corrigé"], ["autre", "Autre"]];
+const ETATS_LECTURE = { en_cours: "⏳ Claude le lit…", ok: "✅ lu", vide: "⚠️ aucun texte trouvé", erreur: "⚠️ illisible" };
+
+function listeAjouts(documents) {
+  const ajoutes = documents.filter((x) => x.ajout_id);
+  return ajoutes.length ? `<ul class="liste-ajouts">${ajoutes.map((x) => `<li>
+      ${x.local ? `<a href="/fichiers/${x.local.split("/").map(encodeURIComponent).join("/")}" target="_blank">${esc(x.nom)}</a>` : esc(x.nom)}
+      <span class="badge">${esc((CATEGORIES_AJOUT.find(([c]) => c === x.categorie) || [, x.categorie])[1])}</span>
+      ${x.photos ? `<span class="doux">${x.photos} photo${x.photos > 1 ? "s" : ""}</span>` : ""}
+      <span class="doux" ${x.erreur ? `title="${esc(x.erreur)}"` : ""}>${ETATS_LECTURE[x.lecture] || ""}</span>
+      <button class="btn petit" data-suppr="${esc(x.ajout_id)}" title="Retirer ce document">✕</button></li>`).join("")}</ul>` : "";
+}
+
+function blocAjouts(documents) {
+  return `<details class="carte ajout-doc" ${documents.some((x) => x.ajout_id) ? "open" : ""}>
+    <summary><b>📎 Il manque un document ?</b> <span class="doux">Ajoute un fichier du PC ou prends-le en photo</span></summary>
+    <p class="doux">Un cours, un TD ou une annale qui n'est pas sur UPdago : Claude s'en servira pour ton pack, tes leçons et tes annales corrigées.
+      Plusieurs photos envoyées ensemble font un seul document (une page par photo).</p>
+    <div class="ligne">
+      <label>C'est quoi ? <select id="aj-cat">${CATEGORIES_AJOUT.map(([c, n]) => `<option value="${c}">${n}</option>`).join("")}</select></label>
+      <label style="flex:1;min-width:12rem">Nom (facultatif) <input id="aj-titre" placeholder="ex. TD4 sous-réseaux"></label>
+    </div>
+    <div class="boutons-ajout">
+      <label class="btn">📄 Fichiers du PC<input type="file" id="aj-fichiers" multiple hidden
+        accept=".pdf,.docx,.pptx,.ppsx,.txt,.md,.html,.zip,image/*"></label>
+      <label class="btn">📷 Prendre une photo<input type="file" id="aj-photo" accept="image/*" capture="environment" hidden></label>
+      <label class="btn">🖼️ Photos de la galerie<input type="file" id="aj-galerie" accept="image/*" multiple hidden></label>
+    </div>
+    <div id="aj-photos"></div>
+    <p class="doux" id="aj-etat" role="status"></p>
+    <div id="aj-liste">${listeAjouts(documents)}</div></details>`;
+}
+
+function brancherAjouts(e, documents, avecPack) {
+  let photos = [];  // photos en attente : on peut en prendre plusieurs avant d'envoyer
+  const etat = $("#aj-etat");
+  const envoyer = async (fichiers) => {
+    const f = new FormData();
+    f.append("categorie", $("#aj-cat").value);
+    f.append("titre", $("#aj-titre").value);
+    fichiers.forEach((x) => f.append("fichiers", x, x.name || "photo.jpg"));
+    etat.className = "doux";
+    etat.textContent = `Envoi de ${fichiers.length} fichier${fichiers.length > 1 ? "s" : ""}…`;
+    try {
+      const r = await api(`/api/examen/${encodeURIComponent(e.id)}/documents`, { method: "POST", body: f });
+      const cat = $("#aj-cat").value;
+      etat.textContent = `✅ Ajouté. Claude le lit (une à deux minutes)${cat === "annale" || cat === "corrige"
+        ? ", puis l'annale corrigée se met à jour toute seule." : r.pack ? ", puis clique « ↻ Régénérer le pack » pour qu'il en tienne compte." : "."}`;
+      photos = []; dessinerPhotos(); $("#aj-titre").value = "";
+      suivre();
+    } catch (err) { etat.className = "erreur"; etat.textContent = err.message; }
+  };
+  const dessinerPhotos = () => {
+    $("#aj-photos").innerHTML = photos.length ? `<div class="vignettes">${photos.map((p, i) => `<div class="vignette">
+        <img src="${p.url}" alt="Page ${i + 1}"><span>${i + 1}</span><button class="btn petit" data-retirer="${i}" title="Retirer">✕</button></div>`).join("")}</div>
+      <div class="ligne"><button class="btn principal" id="aj-envoyer">Envoyer ${photos.length} photo${photos.length > 1 ? "s" : ""} (un document)</button>
+        <span class="doux">Une autre page ? Reprends une photo.</span></div>` : "";
+    document.querySelectorAll("[data-retirer]").forEach((b) => (b.onclick = () => { URL.revokeObjectURL(photos[+b.dataset.retirer].url); photos.splice(+b.dataset.retirer, 1); dessinerPhotos(); }));
+    const b = $("#aj-envoyer");
+    if (b) b.onclick = () => { b.disabled = true; envoyer(photos.map((p) => p.fichier)); };
+  };
+  const ajouterPhotos = (input) => {
+    photos.push(...[...input.files].map((fichier) => ({ fichier, url: URL.createObjectURL(fichier) })));
+    input.value = "";
+    dessinerPhotos();
+  };
+  $("#aj-photo").onchange = (ev) => ajouterPhotos(ev.target);
+  $("#aj-galerie").onchange = (ev) => ajouterPhotos(ev.target);
+  $("#aj-fichiers").onchange = (ev) => { const l = [...ev.target.files]; ev.target.value = ""; if (l.length) envoyer(l); };
+  const brancherListe = () => document.querySelectorAll("[data-suppr]").forEach((b) => (b.onclick = async () => {
+    if (!confirm("Retirer ce document ? Il ne servira plus aux prochains packs.")) return;
+    await api(`/api/examen/${encodeURIComponent(e.id)}/documents/${b.dataset.suppr}`, { method: "DELETE" });
+    suivre(true);
+  }));
+  // tant que Claude lit un document, on rafraîchit la liste toute seule
+  const suivre = async (une_fois = false) => {
+    const d = await api(`/api/examen/${encodeURIComponent(e.id)}`).catch(() => null);
+    const zone = $("#aj-liste");
+    if (!d || !zone) return;
+    zone.innerHTML = listeAjouts(d.documents);
+    brancherListe();
+    if (!une_fois && d.documents.some((x) => x.lecture === "en_cours")) setTimeout(suivre, 10000);
+  };
+  brancherListe();
+  if (documents.some((x) => x.lecture === "en_cours")) setTimeout(suivre, 10000);
 }
 
 function sources(messages, documents, pack) {

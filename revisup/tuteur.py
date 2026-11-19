@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import threading
 
-from . import ia_claude, store
+from . import ajouts, ia_claude, store
 from .ia_locale import IALocale
 from .store import journal, maintenant
 
@@ -210,11 +210,16 @@ def _documents_annales(examen: dict) -> tuple[list[dict], list[dict]]:
         texte = (_texte_en_cache(chemin, f).get("texte") or "").strip()
         if texte:
             (annales if cat == "annale" else corriges).append({"nom": f["nom"], "texte": texte[:40000]})
+    for d in ajouts.documents(examen["id"], ("annale", "corrige")):  # sujets ajoutés à la main (photos…)
+        if d.get("texte"):
+            (annales if d["categorie"] == "annale" else corriges).append({"nom": d["nom"], "texte": d["texte"][:40000]})
     return annales, corriges
 
 
 def a_des_annales(examen: dict) -> bool:
     etat = store.lire()
+    if any(a["categorie"] == "annale" for a in ajouts.liste(examen["id"])):
+        return True
     return any(f["cours_id"] == examen.get("cours_id") and etat["classements_fichiers"].get(f["cle"]) == "annale"
                for f in etat["updago"].get("fichiers", []))
 
