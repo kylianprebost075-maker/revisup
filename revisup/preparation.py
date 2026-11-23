@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import ajouts, extraction, ia_claude, notifications, store
-from .ia_locale import IALocale, _similarite
+from .ia_locale import IALocale, _similarite, code_module
 from .store import DOSSIER_COURS, jolie_date, journal, maintenant, slug
 from .synchro import client_updago
 
@@ -83,6 +83,37 @@ def _chemin_local(fichier: dict, categorie: str) -> Path:
     return dossier / f"{slug(nom.stem, 80)}{nom.suffix.lower()}"
 
 
+def fichiers_examen(etat: dict, examen: dict) -> list[dict]:
+    """Fichiers UPdago de l'examen : ceux de son cours, plus ceux des autres cours dont le nom porte le code du module
+    (« R301-TD1… » rangé dans un cours « Physique S3 »). Dans un cours qui mélange plusieurs modules, les fichiers
+    marqués d'un autre code (« R302-CH1… ») sont laissés à leur examen."""
+    code = code_module(f"{examen['matiere']} {examen.get('titre', '')}")
+    res = []
+    for f in etat["updago"].get("fichiers", []):
+        code_f = code_module(f"{f['nom']} {f.get('module', '')}")
+        if f["cours_id"] == examen.get("cours_id"):
+            if not (code and code_f and code_f != code):
+                res.append(f)
+        elif code and code_f == code:
+            res.append(f)
+    return res
+
+
+def cours_par_fichiers(etat: dict, examen: dict) -> dict | None:
+    """Aucun cours au nom du module : celui qui contient le plus de fichiers portant son code."""
+    code = code_module(f"{examen['matiere']} {examen.get('titre', '')}")
+    if not code:
+        return None
+    compte = {}
+    for f in etat["updago"].get("fichiers", []):
+        if code_module(f"{f['nom']} {f.get('module', '')}") == code:
+            compte[f["cours_id"]] = compte.get(f["cours_id"], 0) + 1
+    if not compte:
+        return None
+    meilleur = max(compte, key=compte.get)
+    return next((c for c in etat["updago"].get("cours", []) if c["id"] == meilleur), None)
+
+
 def _texte_en_cache(chemin: Path, fichier: dict) -> dict:
     cache = chemin.with_name(chemin.name + ".texte.json")
     if cache.exists():
@@ -96,9 +127,10 @@ def _texte_en_cache(chemin: Path, fichier: dict) -> dict:
 
 def rassembler_documents(cfg: dict, examen: dict, ia: IALocale) -> list[dict]:
     etat = store.lire()
-    fichiers = [f for f in etat["updago"].get("fichiers", []) if f["cours_id"] == examen.get("cours_id")]
-    fichiers = [f for f in fichiers if not f.get("mime", "").startswith(MIMES_IGNORES) and f.get("taille", 0) <= TAILLE_MAX_FICHIER]
-    ajoutes = ajouts.documents(examen["id"])  # ajoutés à la main (fichiers du PC, photos)
+    fichiers = [f for f in fichiers_examen(etat, examen) if not f.get("mime", "").startswith(MIMES_IGNORES) and f.get("taille", 0) <= TAILLE_MAX_FICHIER]
+    noms_updago = {f["nom"].lower() for f in fichiers}
+    ajoutes = [d for d in ajouts.documents(examen["id"])  # ajoutés à la main (fichiers du PC, photos), sans doublon d'UPdago
+               if d["nom"].lower() not in noms_updago]
     if not fichiers:
         return ajoutes
 
@@ -143,7 +175,8 @@ def preparer_examen(cfg: dict, examen_id: str, reutiliser: bool = False) -> dict
     try:
         # 1. le bon cours UPdago
         if not examen.get("cours_id"):
-            cours = ia.associer_cours(examen["matiere"], examen.get("titre", ""), etat["updago"].get("cours", []))
+            cours = (ia.associer_cours(examen["matiere"], examen.get("titre", ""), etat["updago"].get("cours", []))
+                     or cours_par_fichiers(etat, examen))
             if cours:
                 examen = _maj_examen(examen_id, cours_id=cours["id"], cours_nom=cours["nom"])
                 journal(f"  cours UPdago associé : {cours['nom']}")

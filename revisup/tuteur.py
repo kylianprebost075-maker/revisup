@@ -197,12 +197,12 @@ En français ; formules en $...$ ; code et commandes entre ` ` ou dans des blocs
 
 def _documents_annales(examen: dict) -> tuple[list[dict], list[dict]]:
     """Annales et corrigés du cours de l'examen, avec leur texte (fichiers déjà téléchargés par la préparation)."""
-    from .preparation import _chemin_local, _texte_en_cache
+    from .preparation import _chemin_local, _texte_en_cache, fichiers_examen
     etat = store.lire()
     annales, corriges = [], []
-    for f in etat["updago"].get("fichiers", []):
+    for f in fichiers_examen(etat, examen):
         cat = etat["classements_fichiers"].get(f["cle"])
-        if f["cours_id"] != examen.get("cours_id") or cat not in ("annale", "corrige"):
+        if cat not in ("annale", "corrige"):
             continue
         chemin = _chemin_local(f, cat)
         if not chemin.exists():
@@ -220,8 +220,8 @@ def a_des_annales(examen: dict) -> bool:
     etat = store.lire()
     if any(a["categorie"] == "annale" for a in ajouts.liste(examen["id"])):
         return True
-    return any(f["cours_id"] == examen.get("cours_id") and etat["classements_fichiers"].get(f["cle"]) == "annale"
-               for f in etat["updago"].get("fichiers", []))
+    from .preparation import fichiers_examen
+    return any(etat["classements_fichiers"].get(f["cle"]) == "annale" for f in fichiers_examen(etat, examen))
 
 
 def generer_annales(cfg: dict, examen_id: str) -> int:

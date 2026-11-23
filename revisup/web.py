@@ -184,14 +184,11 @@ def api_examen(eid):
     ex = etat["examens"].get(eid) or abort(404)
     messages = preparation.messages_lies(etat, ex)
     docs = []
-    if ex.get("cours_id"):
-        for f in etat["updago"].get("fichiers", []):
-            if f["cours_id"] != ex["cours_id"]:
-                continue
-            cat = etat["classements_fichiers"].get(f["cle"], "?")
-            local = preparation._chemin_local(f, cat) if cat != "?" else None
-            docs.append({"nom": f["nom"], "categorie": cat, "section": f["section"], "taille": f["taille"],
-                         "local": str(local.relative_to(DOSSIER_COURS)).replace("\\", "/") if local and local.exists() else None})
+    for f in preparation.fichiers_examen(etat, ex):  # son cours, et les fichiers d'autres cours au code du module
+        cat = etat["classements_fichiers"].get(f["cle"], "?")
+        local = preparation._chemin_local(f, cat) if cat != "?" else None
+        docs.append({"nom": f["nom"], "categorie": cat, "section": f["section"], "taille": f["taille"],
+                     "local": str(local.relative_to(DOSSIER_COURS)).replace("\\", "/") if local and local.exists() else None})
     for a in etat.get("ajouts", {}).get(eid, []):  # ajoutés à la main (fichiers du PC, photos)
         docs.append({"nom": a["nom"], "categorie": a["categorie"], "section": "ajouté par toi", "taille": a["taille"],
                      "local": a["local"] if (DOSSIER_COURS / a["local"]).exists() else None, "ajout_id": a["id"],
