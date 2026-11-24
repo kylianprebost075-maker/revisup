@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from .config import DOSSIER_DATA
@@ -67,6 +68,14 @@ SCHEMA_PACK = {
     "additionalProperties": False,
 }
 
+REGLES_SVG = """Schémas : un schéma s'écrit en SVG dans un bloc ```svg qui contient un seul élément <svg viewBox='0 0 L H'> (L de 300 à 640), sans width ni height, sans script, sans image, sans lien ni style.
+- Attributs entre apostrophes (stroke='currentColor'), jamais entre guillemets doubles : la réponse est du JSON.
+- Traits stroke='currentColor' stroke-width='2' fill='none' ; textes fill='currentColor' stroke='none' font-size='14' font-family='sans-serif' ; points des nœuds en cercles pleins r='4' fill='currentColor' ; un composant posé sur un fil a fill='white' pour cacher le fil (le blanc devient la couleur du fond en mode sombre).
+- Ce que l'étudiant doit ajouter ou retenir (nœuds à placer, flèches de courant et de tension, éléments redessinés) est en orange '#e8590c', le reste en currentColor.
+- Flèches : des <marker> dans <defs>, un en currentColor et un en orange, avec des id courts.
+- Électricité, norme européenne : résistance = rectangle avec son nom à côté, source de tension = cercle traversé par le fil avec la flèche de E, source de courant = cercle avec la flèche dans le fil, fils horizontaux et verticaux, flèche de tension à côté du dipôle et flèche de courant sur le fil.
+- Lisible : aucun texte ne chevauche un trait ou un autre texte, marge de 20 autour du dessin. Fidèle au sujet : mêmes composants, mêmes noms, même disposition."""
+
 SYSTEME = """Tu es un tuteur universitaire exigeant et bienveillant. Tu prépares un étudiant de l'Université de Poitiers à un examen précis, à partir de SES documents de cours et des messages de SES enseignants.
 
 Règles :
@@ -75,7 +84,10 @@ Règles :
 - Les anciens examens (annales) montrent ce qui tombe vraiment : reprends leur style, leur niveau et leurs types de questions.
 - Appuie-toi d'abord sur les documents fournis. Si tu complètes avec tes propres connaissances, signale-le avec « (hors documents) ».
 - Cite les fichiers sources entre crochets, par exemple [CM3_integrales.pdf].
-- Formules en LaTeX : $...$ en ligne, $$...$$ en bloc. Code dans des blocs ``` avec le langage."""
+- Formules en LaTeX : $...$ en ligne, $$...$$ en bloc. Code dans des blocs ``` avec le langage.
+- Quand la matière s'appuie sur des schémas (montages électriques, chronogrammes, topologies réseau, diagrammes…), mets-en dans la fiche et dans les énoncés et corrigés des exercices : un exercice qui demande de compléter ou de dessiner un schéma a son schéma corrigé.
+
+""" + REGLES_SVG
 
 
 class ClaudeManuel(Exception):
@@ -119,7 +131,7 @@ def construire_demande(cfg: dict, examen: dict, infos: dict, messages: list[dict
     """Assemble le texte envoyé à Claude dans la limite du budget, sans rien couper en silence :
     ce qui ne rentre pas est listé dans "non_inclus" et affiché sur le tableau de bord."""
     budget = int(cfg["claude"].get("budget_caracteres", 400_000))
-    autorise_pdf = mode_effectif(cfg) == "api"
+    mode = mode_effectif(cfg)
     inclus, non_inclus, pdfs = [], [], []
     taille_pdfs = 0
     morceaux = []
@@ -127,13 +139,20 @@ def construire_demande(cfg: dict, examen: dict, infos: dict, messages: list[dict
     tries = sorted(documents, key=lambda d: ORDRE_CATEGORIES.index(d.get("categorie", "autre")))
     for doc in tries:
         texte = doc.get("texte", "")
-        if doc.get("scanne") and autorise_pdf and doc["chemin"].lower().endswith(".pdf"):
+        est_pdf = doc["chemin"].lower().endswith(".pdf")
+        # les annales et corrigés sont joints en PDF : leurs schémas et figures n'existent pas dans le texte extrait
+        figures = doc["categorie"] in ("annale", "corrige") and doc.get("pages", 0) <= 30
+        joint = False
+        if est_pdf and mode in ("api", "cli") and (figures or (doc.get("scanne") and mode == "api")):
             taille = Path(doc["chemin"]).stat().st_size
             if len(pdfs) < 8 and taille_pdfs + taille < 20_000_000 and doc.get("pages", 0) <= 100:
                 pdfs.append(doc)
                 taille_pdfs += taille
-                inclus.append({"nom": doc["nom"], "categorie": doc["categorie"], "mode": "PDF (scan)"})
-                continue
+                joint = True
+                if mode == "api" or not texte:  # l'API lit le texte du PDF elle-même
+                    inclus.append({"nom": doc["nom"], "categorie": doc["categorie"],
+                                   "mode": "PDF (scan)" if doc.get("scanne") else "PDF (avec figures)"})
+                    continue
         if not texte:
             non_inclus.append({"nom": doc["nom"], "raison": doc.get("erreur") or "aucun texte lisible"})
             continue
@@ -146,7 +165,8 @@ def construire_demande(cfg: dict, examen: dict, infos: dict, messages: list[dict
                 non_inclus.append({"nom": doc["nom"], "raison": "budget de texte atteint"})
                 continue
         else:
-            inclus.append({"nom": doc["nom"], "categorie": doc["categorie"], "mode": "texte"})
+            inclus.append({"nom": doc["nom"], "categorie": doc["categorie"],
+                           "mode": "texte + PDF (avec figures)" if joint else "texte"})
         budget -= len(texte)
         morceaux.append(f"### [{NOMS_CATEGORIES[doc['categorie']]}] {doc['nom']}\n"
                         f"(section : {doc.get('section') or '—'})\n\n{texte}")
@@ -199,7 +219,7 @@ def demander_json(cfg: dict, systeme: str, texte: str, schema: dict, pdfs: list[
     if mode == "api":
         resultat, details = _via_api(cfg, systeme, texte, schema, pdfs or [])
     elif mode == "cli":
-        resultat, details = _via_cli(cfg, systeme, texte, schema)
+        resultat, details = _via_cli(cfg, systeme, texte, schema, pdfs or [])
     else:
         raise ErreurClaude("Claude n'est pas disponible (ni clé API, ni Claude Code) : mode manuel uniquement.")
     return resultat, {"mode": mode, **details}
@@ -252,17 +272,38 @@ def _via_api(cfg: dict, systeme: str, texte: str, schema: dict, pdfs: list[dict]
     return json.loads(texte), {"modele": message.model, "jetons_entree": u.input_tokens, "jetons_sortie": u.output_tokens}
 
 
-def _via_cli(cfg: dict, systeme: str, texte: str, schema: dict) -> tuple[dict, dict]:
+def _via_cli(cfg: dict, systeme: str, texte: str, schema: dict, pdfs: list[dict] | None = None) -> tuple[dict, dict]:
+    """Claude Code en mode non interactif. Les PDF joints sont copiés dans un dossier de travail et lus avec
+    l'outil Read (seul outil autorisé) : Claude voit alors les pages, schémas et figures compris."""
     exe = trouver_cli(cfg)
     if not exe:
         raise ErreurClaude("Commande `claude` introuvable (installe Claude Code ou passe en mode api/manuel).")
-    prompt = (f"{systeme}\n\n{texte}\n\nN'utilise aucun outil : tout est dans ce message. "
+    DOSSIER_PROMPTS.mkdir(parents=True, exist_ok=True)
+    dossier, commande = DOSSIER_PROMPTS, [exe, "-p", "--output-format", "json",
+                                          "--model", cfg["claude"].get("modele", "claude-opus-5-5")]
+    if pdfs:
+        dossier = Path(tempfile.mkdtemp(prefix="joints-", dir=DOSSIER_PROMPTS))
+        lignes = []
+        for i, doc in enumerate(pdfs, 1):
+            nom = f"document{i}.pdf"
+            shutil.copyfile(doc["chemin"], dossier / nom)
+            lignes.append(f"- {nom} : [{NOMS_CATEGORIES.get(doc.get('categorie'), 'DOCUMENT')}] {doc['nom']}")
+        consigne = ("Commence par lire avec l'outil Read chacun de ces fichiers du dossier courant : ce sont les "
+                    "documents originaux, avec les schémas, montages et figures que le texte ci-dessus ne montre pas.\n"
+                    + "\n".join(lignes) + "\nN'utilise aucun autre outil.")
+        commande += ["--allowedTools", "Read"]
+    else:
+        consigne = "N'utilise aucun outil : tout est dans ce message."
+    prompt = (f"{systeme}\n\n{texte}\n\n{consigne} "
               f"Réponds UNIQUEMENT avec un objet JSON valide (sans texte autour, sans bloc ```), "
               f"conforme à ce schéma JSON :\n{json.dumps(schema, ensure_ascii=False)}")
-    DOSSIER_PROMPTS.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run([exe, "-p", "--output-format", "json", "--model", cfg["claude"].get("modele", "claude-opus-5-5")],
-                          input=prompt, capture_output=True, text=True, encoding="utf-8", timeout=1800,
-                          cwd=DOSSIER_PROMPTS, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    env = {**os.environ, "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"}  # schémas SVG : réponses longues
+    try:
+        proc = subprocess.run(commande, input=prompt, capture_output=True, text=True, encoding="utf-8", timeout=2400,
+                              cwd=dossier, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    finally:
+        if dossier != DOSSIER_PROMPTS:
+            shutil.rmtree(dossier, ignore_errors=True)
     if proc.returncode != 0:
         try:  # en --output-format json, l'erreur est dans la sortie standard
             detail = json.loads(proc.stdout).get("result", "")
@@ -289,15 +330,28 @@ def ecrire_prompt_manuel(examen: dict, demande: dict) -> Path:
 
 
 def extraire_json(texte: str) -> dict:
-    texte = texte.strip()
-    texte = re.sub(r"^```(?:json)?\s*|\s*```$", "", texte)
+    """L'objet JSON de la réponse, même entouré de texte (« J'ai lu les documents… ») ou d'un bloc ```json."""
+    brut = texte
+    texte = re.sub(r"^```(?:json)?\s*|\s*```$", "", texte.strip())
     try:
         return json.loads(texte)
     except json.JSONDecodeError:
-        m = re.search(r"(?s)\{.*\}", texte)
-        if not m:
-            raise ErreurClaude("La réponse de Claude ne contient pas de JSON.")
-        return json.loads(m.group(0))
+        pass
+    decodeur, meilleur, pos = json.JSONDecoder(), None, 0
+    while (debut := texte.find("{", pos)) >= 0:  # le plus grand objet qui se décode, où qu'il commence
+        try:
+            obj, fin = decodeur.raw_decode(texte, debut)
+        except json.JSONDecodeError:
+            pos = debut + 1
+            continue
+        if isinstance(obj, dict) and (meilleur is None or fin - debut > meilleur[1]):
+            meilleur = (obj, fin - debut)
+        pos = fin
+    if meilleur:
+        return meilleur[0]
+    DOSSIER_PROMPTS.mkdir(parents=True, exist_ok=True)
+    (DOSSIER_PROMPTS / "derniere-reponse-illisible.txt").write_text(brut, encoding="utf-8")
+    raise ErreurClaude("La réponse de Claude ne contient pas de JSON lisible (copie dans data/prompts/derniere-reponse-illisible.txt).")
 
 
 def valider_pack(pack: dict) -> dict:

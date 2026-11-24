@@ -323,3 +323,9 @@ main.large { max-width: 1600px; }
 .liste-ajouts li { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; padding: .4rem .6rem; border: 1px solid var(--ligne); border-radius: 8px; }
 .liste-ajouts li a { flex: 1; min-width: 10rem; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .boutons-ajout .btn { flex: 1 1 100%; text-align: center; padding: .7rem; } }
+
+/* schémas SVG dessinés par Claude (montages, chronogrammes…) : traits à la couleur du texte, ajouts en orange */
+.schema { margin: 14px 0; padding: 12px; background: var(--carte); border: 1px solid var(--ligne); border-radius: var(--rayon);
+  color: var(--texte); text-align: center; overflow-x: auto; }
+.schema svg { width: 100%; max-width: 640px; height: auto; display: inline-block; }
+.schema svg [fill='white'], .schema svg [fill='#fff'], .schema svg [fill='#ffffff'] { fill: var(--carte); }

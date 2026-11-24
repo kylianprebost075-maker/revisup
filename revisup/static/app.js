@@ -34,10 +34,37 @@ async function api(url, options = {}) {
 }
 const post = (url, data) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data || {}) });
 
+// Schéma dessiné par Claude (bloc ```svg) : nettoyé par DOMPurify (ni script, ni lien, ni image, ni style),
+// identifiants rendus uniques (plusieurs schémas sur la page ont chacun leurs flèches), mis à l'échelle.
+let nbSchemas = 0;
+function schemaSvg(code) {
+  const brut = `<pre><code>${esc(code)}</code></pre>`;
+  const propre = DOMPurify.sanitize(code, { USE_PROFILES: { svg: true }, FORBID_TAGS: ["style", "image", "a", "foreignObject", "script"] });
+  const t = document.createElement("template");
+  t.innerHTML = propre;
+  const svg = t.content.querySelector("svg");
+  if (!svg) return brut;
+  const prefixe = `sch${++nbSchemas}-`, ids = {};
+  svg.querySelectorAll("[id]").forEach((e) => { ids[e.id] = prefixe + e.id; e.id = prefixe + e.id; });
+  svg.querySelectorAll("*").forEach((e) => {
+    for (const a of [...e.attributes]) {
+      const v = a.value.replace(/url\(\s*#([^)\s]+)\s*\)/g, (m, i) => (ids[i] ? `url(#${ids[i]})` : m))
+        .replace(/^#(.+)$/, (m, i) => (ids[i] ? `#${ids[i]}` : m));
+      if (v !== a.value) e.setAttribute(a.name, v);
+    }
+  });
+  const l = parseFloat(svg.getAttribute("width")), h = parseFloat(svg.getAttribute("height"));
+  if (!svg.getAttribute("viewBox") && l && h) svg.setAttribute("viewBox", `0 0 ${l} ${h}`);
+  svg.removeAttribute("width"); svg.removeAttribute("height");
+  svg.setAttribute("role", "img");
+  return `<figure class="schema">${svg.outerHTML}</figure>`;
+}
+
 function md(texte) {
   if (!window.marked || !window.DOMPurify) return `<pre style="white-space:pre-wrap">${esc(texte)}</pre>`;
-  const maths = [];
+  const maths = [], schemas = [];
   let src = String(texte || "")
+    .replace(/```svg[^\n]*\n([\s\S]*?)```/g, (_, m) => { schemas.push(m); return `\n\n@@S${schemas.length - 1}@@\n\n`; })
     .replace(/\\\[([\s\S]+?)\\\]/g, (_, m) => `$$${m}$$`)  // notations LaTeX \[ \] et \( \) (IA locale)
     .replace(/\\\(([\s\S]+?)\\\)/g, (_, m) => `$${m}$`)
     .replace(/\$\$([\s\S]+?)\$\$/g, (_, m) => { maths.push([m, true]); return `@@M${maths.length - 1}@@`; })
@@ -50,7 +77,7 @@ function md(texte) {
     const [m, bloc] = maths[+i];
     if (!window.katex) return esc(bloc ? `$$${m}$$` : `$${m}$`);
     try { return katex.renderToString(m, { displayMode: bloc, throwOnError: false }); } catch { return esc(m); }
-  });
+  }).replace(/(?:<p>\s*)?@@S(\d+)@@(?:\s*<\/p>)?/g, (_, i) => schemaSvg(schemas[+i]));
 }
 
 const STATUTS = {
@@ -104,6 +131,19 @@ async function router() {
   return vueAccueil();
 }
 window.addEventListener("hashchange", router);
+
+// Web app installée (iPhone, Mac) : elle reste ouverte en mémoire des jours entiers. Quand l'app du PC a changé,
+// on recharge la page pour ne pas afficher les nouveautés (schémas…) avec l'ancien code.
+const VERSION_APP = new URL(document.querySelector('script[src*="/static/app.js"]')?.src || location.href).searchParams.get("v");
+async function verifierVersion() {
+  if (!VERSION_APP || document.visibilityState !== "visible") return;
+  try {
+    const { version } = await api("/api/version");
+    if (version && version !== VERSION_APP) location.reload();
+  } catch { /* PC injoignable : on réessaiera */ }
+}
+document.addEventListener("visibilitychange", verifierVersion);
+setInterval(verifierVersion, 5 * 60 * 1000);
 
 // ── accueil ──────────────────────────────────────────────────────────────
 function carteExamen(e) {

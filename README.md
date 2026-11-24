@@ -1,4 +1,4 @@
-# 📚 RevisUP — assistant de révision par IA pour étudiants (BUT, licence, Université de Poitiers)
+# 📚 RevisUP — assistant de révision par IA pour les étudiants de l'IUT de Poitiers (BUT Réseaux & Télécoms)
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-web%20app-000000?logo=flask)](https://flask.palletsprojects.com/)
@@ -11,7 +11,11 @@ récupère tes cours sur Moodle, et l'IA en fait des **fiches de révision, des 
 corrigés et des annales corrigées**, puis un **planning de révision** qui s'adapte à ta semaine.
 Tout tourne sur ton PC : tes données restent chez toi.
 
-> 🇬🇧 *AI study assistant for university students: reads your timetable (ADE / iCal) and Moodle courses,
+🎓 **Né à l'IUT de Poitiers** : conçu par un étudiant du **BUT Réseaux & Télécoms (R&T) de l'IUT de Poitiers**
+(Université de Poitiers), pour les outils de l'université : emploi du temps **UPplanning (ADE)**, Moodle **UPdago**,
+messagerie de l'ENT et relevés de notes **ScoDoc**. Projet étudiant indépendant : ce n'est pas un outil officiel de l'IUT.
+
+> 🇬🇧 *AI study assistant built by a student of the IUT de Poitiers (BUT Networks & Telecoms, France): reads your timetable (ADE / iCal) and Moodle courses,
 > detects exams, and uses Claude + a local LLM (LM Studio) to generate revision sheets, lessons, quizzes,
 > worked exercises, corrected past papers and a weekly study plan. Self-hosted Flask web app with a PWA for
 > iPhone and Mac, push notifications and learning games. French UI.*
@@ -30,6 +34,8 @@ Tout tourne sur ton PC : tes données restent chez toi.
 - 📥 **Cours Moodle (UPdago)** : téléchargement et tri automatique (cours, TD, TP, annales, corrigés).
 - 🧠 **Packs de révision par Claude** : fiche de synthèse, leçons vivantes, exercices corrigés, QCM, points clés, pièges.
 - 📝 **Annales corrigées** question par question, avec le sujet affiché à côté.
+- ⚡ **Schémas dessinés** : Claude lit les figures des sujets et redessine les montages (électricité, réseaux,
+  chronogrammes) ; dans la correction, ce qu'il faut ajouter (nœuds, flèches de courant et de tension) est en orange.
 - 📎 **Documents manquants** : ajoute un fichier du PC ou prends les pages en photo ; Claude les retranscrit.
 - 💬 **Tuteur IA** sous chaque exercice : indices, méthode, vérification de ta réponse.
 - 🗓️ **Planning de révision automatique** qui tient compte de tes cours, du sport et des trajets.

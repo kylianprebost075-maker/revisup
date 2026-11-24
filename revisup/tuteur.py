@@ -3,7 +3,9 @@ fiche d'un pack (exacte mais indigeste) en leçons vivantes : accroche, analogie
 """
 from __future__ import annotations
 
+import re
 import threading
+from pathlib import Path
 
 from . import ajouts, ia_claude, store
 from .ia_locale import IALocale
@@ -48,20 +50,30 @@ SYSTEME_LECONS = """Tu es le prof de BUT Réseaux & Télécoms que tout étudian
 Une leçon par chapitre (titre « ## ») de la fiche, dans le même ordre. Titre : celui du chapitre, sans « Chapitre N — » ni numéro.
 - accroche : 1 ou 2 phrases. Une situation concrète ou une question intrigante tirée de son quotidien (box internet, Wi-Fi de l'IUT, Netflix, Discord, jeux en ligne, téléphone, site web qu'il visite…) qui montre à quoi sert le chapitre.
 - analogie : une image du quotidien qui fait comprendre l'idée centrale (2 ou 3 phrases), avec sa limite si elle peut tromper.
-- explication_markdown : le chapitre expliqué pas à pas, 250 à 450 mots, paragraphes courts, tutoiement, **gras** sur les mots-clés, un petit schéma dans un bloc ``` si ça aide. Garde TOUTES les notions exigibles de la fiche (définitions, valeurs, commandes, formules, méthodes) : c'est un vrai cours, pas un résumé vague.
-- exemple_markdown : un exemple concret résolu étape par étape, du type de ceux de l'examen (calcul, commande, code, trace, schéma…).
+- explication_markdown : le chapitre expliqué pas à pas, 250 à 450 mots, paragraphes courts, tutoiement, **gras** sur les mots-clés, et un schéma SVG (règles plus bas) dès que le chapitre parle d'un montage, d'un circuit, d'un signal ou d'une architecture : c'est souvent ce qui fait comprendre. Garde TOUTES les notions exigibles de la fiche (définitions, valeurs, commandes, formules, méthodes) : c'est un vrai cours, pas un résumé vague.
+- exemple_markdown : un exemple concret résolu étape par étape, du type de ceux de l'examen (calcul, commande, code, trace, schéma…), avec son schéma SVG quand il porte sur un montage.
 - piege : l'erreur que font la plupart des étudiants sur ce chapitre, et comment l'éviter (1 ou 2 phrases).
 - a_retenir : LA phrase à savoir par cœur (moins de 200 caractères).
 - defi_question / defi_reponse_markdown : une petite question ouverte pour vérifier qu'il a compris (pas un QCM), et sa réponse expliquée.
 - minutes : temps estimé pour lire et comprendre la leçon (5 à 20).
 
-Règles : en français ; fidèle à la fiche (n'invente aucune valeur ; une connaissance ajoutée hors fiche doit être sûre et utile) ; pas de références de fichiers entre crochets ; formules en $...$ ; code dans des blocs ``` avec le langage ; une balise HTML citée en exemple s'écrit toujours entre ` ` (exemple : `<p>`)."""
+Règles : en français ; fidèle à la fiche (n'invente aucune valeur ; une connaissance ajoutée hors fiche doit être sûre et utile) ; pas de références de fichiers entre crochets ; formules en $...$ ; code dans des blocs ``` avec le langage ; une balise HTML citée en exemple s'écrit toujours entre ` ` (exemple : `<p>`).
+
+""" + ia_claude.REGLES_SVG
 
 _en_cours: set = set()
 
 
+def _sans_svg(texte: str) -> str:
+    """Un schéma SVG pèse des milliers de caractères : pour le tuteur, on ne garde que ses étiquettes."""
+    def resume(m):
+        etiquettes = [t.strip() for t in re.findall(r"<text[^>]*>(.*?)</text>", m.group(1), re.S) if t.strip()]
+        return f"[schéma ; étiquettes : {', '.join(dict.fromkeys(re.sub(r'<[^>]+>', '', e) for e in etiquettes))}]"
+    return re.sub(r"```svg\s*(.*?)```", resume, texte, flags=re.S)
+
+
 def _court(v, n: int) -> str:
-    return str(v or "").strip()[:n]
+    return _sans_svg(str(v or "")).strip()[:n]
 
 
 def aide(cfg: dict, contexte: dict, question: str, historique: list[dict]) -> str:
@@ -188,11 +200,15 @@ Pour chaque annale fournie (un fichier = une annale) :
 - titre : court et parlant (ex. « Examen final — 2022-2023 », « Test 1 — Modèle OSI ») ; fichier : le nom du fichier tel que donné.
 - parties : les parties du sujet dans l'ordre (ex. « 1. Modèle OSI et TCP/IP ») ; s'il n'y en a pas, une seule partie « Questions ».
 - TOUTES les questions, dans l'ordre, sans en sauter aucune. numero : « Q1 », « Q2 »… comme dans le sujet. intitule : 3 à 8 mots qui résument la question (ex. « Protocole pour transférer des pages web »).
-- enonce_markdown : l'énoncé complet et fidèle (données, adresses, tableaux en Markdown). Si une figure ou une capture manque dans le texte, écris-le : « (capture non lisible ici) ».
-- reponse_markdown : la réponse attendue d'abord (en gras), puis la justification ou la méthode pas à pas, les calculs détaillés (binaire si utile), et un tableau complet et corrigé quand la question est un tableau. Vérifie chaque calcul deux fois. Si une capture manque, réponds avec le cas le plus probable et dis-le.
+- enonce_markdown : l'énoncé complet et fidèle (données, adresses, tableaux en Markdown). Une figure du sujet (montage, schéma, chronogramme, topologie, capture) est redessinée en SVG dans l'énoncé de la première question qui s'en sert, à l'identique ; les questions suivantes écrivent « (voir le montage de Q1) ». Si une figure reste illisible, écris-le.
+- reponse_markdown : la réponse attendue d'abord (en gras), puis la justification ou la méthode pas à pas, les calculs détaillés (binaire si utile), et un tableau complet et corrigé quand la question est un tableau. Vérifie chaque calcul deux fois.
+- Schéma dans la réponse : obligatoire quand la question fait compléter ou dessiner quelque chose (nommer ou placer des nœuds ou des points, placer ou orienter des flèches de courant ou de tension, brancher un appareil de mesure, redessiner un circuit équivalent, Thévenin, Norton, compléter un chronogramme ou un schéma réseau) : le montage complet du sujet, avec en orange tout ce que l'étudiant doit ajouter. Utile aussi pour montrer une étape (circuit simplifié pour un calcul de résistance équivalente, source éteinte pour la superposition).
 - corrige_du_prof : true si la réponse vient d'un corrigé fourni par l'enseignant (reprends-le fidèlement, complète l'explication si elle est trop sèche), false si c'est ta correction.
+Les documents originaux sont joints en PDF : lis-les pour voir les figures, le texte fourni plus bas n'en contient pas.
 Appuie-toi sur la fiche de révision du cours pour employer les mêmes notions et notations que le prof.
-En français ; formules en $...$ ; code et commandes entre ` ` ou dans des blocs ``` ; une balise HTML s'écrit entre ` `."""
+En français ; formules en $...$ ; code et commandes entre ` ` ou dans des blocs ``` ; une balise HTML s'écrit entre ` `.
+
+""" + ia_claude.REGLES_SVG
 
 
 def _documents_annales(examen: dict) -> tuple[list[dict], list[dict]]:
@@ -207,13 +223,28 @@ def _documents_annales(examen: dict) -> tuple[list[dict], list[dict]]:
         chemin = _chemin_local(f, cat)
         if not chemin.exists():
             continue
-        texte = (_texte_en_cache(chemin, f).get("texte") or "").strip()
+        cache = _texte_en_cache(chemin, f)
+        texte = (cache.get("texte") or "").strip()
         if texte:
-            (annales if cat == "annale" else corriges).append({"nom": f["nom"], "texte": texte[:40000]})
+            (annales if cat == "annale" else corriges).append({"nom": f["nom"], "texte": texte[:40000], "categorie": cat,
+                                                               "chemin": str(chemin), "pages": cache.get("pages") or 0})
     for d in ajouts.documents(examen["id"], ("annale", "corrige")):  # sujets ajoutés à la main (photos…)
         if d.get("texte"):
-            (annales if d["categorie"] == "annale" else corriges).append({"nom": d["nom"], "texte": d["texte"][:40000]})
+            (annales if d["categorie"] == "annale" else corriges).append({**d, "texte": d["texte"][:40000]})
     return annales, corriges
+
+
+def _pdfs_joints(docs: list[dict]) -> list[dict]:
+    """Les originaux en PDF, pour que Claude voie les schémas (au plus 8 fichiers, 20 Mo, 40 pages chacun)."""
+    res, taille = [], 0
+    for d in docs:
+        chemin = Path(d.get("chemin") or "")
+        if chemin.suffix.lower() != ".pdf" or not chemin.exists() or (d.get("pages") or 0) > 40:
+            continue
+        if len(res) < 8 and taille + chemin.stat().st_size < 20_000_000:
+            res.append(d)
+            taille += chemin.stat().st_size
+    return res
 
 
 def a_des_annales(examen: dict) -> bool:
@@ -236,7 +267,7 @@ def generer_annales(cfg: dict, examen_id: str) -> int:
              + "".join(f"# ANNALE — fichier : {a['nom']}\n{a['texte']}\n\n" for a in annales)
              + "".join(f"# CORRIGÉ DU PROF — fichier : {c['nom']}\n{c['texte']}\n\n" for c in corriges)
              + f"# Fiche de révision du cours (référence)\n{pack.get('synthese_markdown', '')[:30000]}")
-    rep, _ = ia_claude.demander_json(cfg, SYSTEME_ANNALES, texte, SCHEMA_ANNALES)
+    rep, _ = ia_claude.demander_json(cfg, SYSTEME_ANNALES, texte, SCHEMA_ANNALES, _pdfs_joints(annales + corriges))
     resultat = []
     for a in rep.get("annales", []):
         parties = [{"titre": str(p.get("titre") or "Questions"), "questions": [

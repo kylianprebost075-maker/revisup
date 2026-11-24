@@ -97,9 +97,25 @@ def memoriser_code(rep):
 
 # ── pages ───────────────────────────────────────────────────────────────
 
+FICHIERS_APP = ("app.js", "jeux.js", "style.css")
+
+
+def _version_app() -> str:
+    """Change dès qu'un fichier de l'app est modifié : la web app de l'iPhone ou du Mac se recharge alors seule."""
+    return format(int(sum((STATIC / f).stat().st_mtime for f in FICHIERS_APP)) % 16**8, "x")
+
+
 @app.get("/")
 def accueil():
-    return send_from_directory(STATIC, "index.html")
+    version, html = _version_app(), (STATIC / "index.html").read_text(encoding="utf-8")
+    for f in FICHIERS_APP:  # l'adresse change à chaque version : aucun cache ne peut servir l'ancien fichier
+        html = html.replace(f'"/static/{f}"', f'"/static/{f}?v={version}"')
+    return Response(html, mimetype="text/html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/version")
+def api_version():
+    return jsonify(version=_version_app())
 
 
 @app.get("/static/<path:nom>")
